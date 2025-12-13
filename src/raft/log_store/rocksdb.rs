@@ -16,7 +16,6 @@ use openraft::RaftTypeConfig;
 use openraft::entry::RaftEntry;
 use openraft::storage::IOFlushed;
 use openraft::storage::RaftLogStorage;
-use openraft::type_config::TypeConfigExt;
 use openraft::type_config::alias::EntryOf;
 use openraft::type_config::alias::LogIdOf;
 use openraft::type_config::alias::VoteOf;
@@ -200,7 +199,7 @@ impl<C: RaftTypeConfig> RaftLogStorage<C> for RocksLogStore<C> {
         let db = self.db.clone();
         let handle = spawn_blocking(move || {
             let res = db.flush_wal(true).map_err(io::Error::other);
-            let _handle = C::spawn(callback.io_completed(res));
+            callback.io_completed(res);
         });
         drop(handle);
 

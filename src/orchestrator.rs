@@ -1,9 +1,10 @@
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use anyhow::Context;
-use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::Server;
 use tracing::debug;
-use tracing::error;
 
 use crate::application::ApplicationLayer;
 use crate::application::ApplicationStateMachine;
@@ -50,10 +51,60 @@ where
         let data_client = self.raft_server.data_client();
         let raft = self.raft_server.raft;
 
-        let mut join_set = JoinSet::new();
+        let mut application = A::new(self.application_config, data_client).await?;
+
+        let mut static_lifecycle_services = vec![];
+
+        for (name, builder) in application.static_lifecycle_service_builder() {
+            let mut svc = builder.build();
+            svc.on_start().await;
+            static_lifecycle_services.push((name.clone(), svc));
+
+            debug!(name, "Static lifecycle service started");
+        }
+
+        let mut handle = {
+            let leader_lifecycle_services = Arc::new(Mutex::new(vec![]));
+            let leader_lifecycle_service_builder = application.leader_lifecycle_service_builder();
+
+            raft.on_leader_change(
+                {
+                    let leader_lifecycle_services = leader_lifecycle_services.clone();
+
+                    move |leader_id| {
+                        debug!(?leader_id, "Became leader");
+
+                        let mut leader_lifecycle_services =
+                            leader_lifecycle_services.lock().unwrap();
+
+                        for (name, builder) in &leader_lifecycle_service_builder {
+                            let mut svc = builder.build();
+                            svc.on_leader_start();
+                            leader_lifecycle_services.push((name.clone(), svc));
+
+                            debug!(name, "Leader lifecycle service started");
+                        }
+                    }
+                },
+                {
+                    move |old_leader_id| {
+                        debug!(?old_leader_id, "Stepped down from leader");
+
+                        let mut leader_lifecycle_services =
+                            leader_lifecycle_services.lock().unwrap();
+
+                        for (name, mut svc) in leader_lifecycle_services.drain(..) {
+                            svc.on_leader_stop();
+
+                            debug!(name, "Leader lifecycle service stopped");
+                        }
+                    }
+                },
+            )
+        };
 
         // Raft internal service and control service
-        join_set.spawn({
+        let internal = tokio::spawn({
             let shutdown_token = shutdown_token.clone();
             let addr = self.raft_config.rpc_url.parse()?;
             let raft = raft.clone();
@@ -70,61 +121,20 @@ where
             }
         });
 
-        // Raft leader status changing
-        {
-            let mut application =
-                A::new(self.application_config, data_client, shutdown_token.clone()).await?;
-
-            join_set.spawn({
-                let shutdown_token = shutdown_token.clone();
-                let metrics_rx = raft.server_metrics();
-                async move {
-                    let mut metrics_rx = metrics_rx;
-
-                    let mut is_running = false;
-
-                    while !shutdown_token.is_cancelled() {
-                        tokio::select! {
-                            biased;
-
-                            _ = shutdown_token.cancelled() => break,
-                            _ = metrics_rx.changed() => {}
-                        }
-
-                        let metrics = metrics_rx.borrow_and_update().clone();
-
-                        debug!(metrics.id, ?metrics, "Metrics changed");
-
-                        if metrics.state.is_leader() {
-                            if !is_running {
-                                debug!(metrics.id, "Node becomes a leader");
-
-                                application.leader_lifecycle_start().await?;
-                                is_running = true;
-                            }
-                        } else if is_running {
-                            application.leader_lifecycle_stop().await?;
-                            is_running = false;
-                        }
-                    }
-
-                    if is_running {
-                        application.leader_lifecycle_stop().await?;
-                    }
-
-                    application.shutdown().await?;
-
-                    Ok(())
-                }
-            });
-        }
-
         shutdown_token.cancelled().await;
-        while let Some(res) = join_set.join_next().await {
-            if let Err(err) = res {
-                error!(?err, "Background task exited unexpectedly");
-            }
+
+        // Shutdown leader lifecycle services
+        handle.close().await;
+
+        // Shutdown static lifecycle services
+        for (name, mut svc) in static_lifecycle_services {
+            svc.on_shutdown().await;
+            debug!(name, "Static lifecycle service stopped");
         }
+
+        application.shutdown().await?;
+
+        internal.await??;
         raft.shutdown().await?;
 
         Ok(())

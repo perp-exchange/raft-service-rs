@@ -9,7 +9,7 @@ byteorder = "1.5.0"
 derive_more = { version = "2.0.1", features = ["display"] }
 futures-util = "0.3.31"
 maplit = "1.0.2"
-openraft = { git = "https://github.com/databendlabs/openraft.git", rev = "f13f0eec7922e84ad9a3beeb166bb8a8133805ad", features = ["serde"] }
+openraft = { git = "https://github.com/databendlabs/openraft.git", rev = "c56d043b6f10d2c0665e2fb7d7f8b1c64488e1d1", features = ["serde"] }
 prost = "0.14.1"
 rocksdb = "0.24.0"
 serde = "1.0.228"

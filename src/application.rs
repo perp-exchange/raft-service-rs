@@ -1,13 +1,15 @@
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::sync::Arc;
 
 use prost::DecodeError;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tokio_util::sync::CancellationToken;
 use tonic::async_trait;
 
 use crate::server::RaftDataClient;
+use crate::service::LeaderLifecycleServiceBuilder;
+use crate::service::StaticLifecycleServiceBuilder;
 
 pub trait ApplicationConfig: Debug + Copy + Default + Ord + Send + Sync + 'static {
     type Request: Debug + Display + Serialize + DeserializeOwned + Send + Sync + 'static;
@@ -32,24 +34,15 @@ pub trait ApplicationLayer: Sized + Send + Sync + 'static {
     type R: ApplicationStateMachine;
     type Config;
 
-    async fn new(
-        config: Self::Config,
-        sm: RaftDataClient<Self::R>,
-        shutdown: CancellationToken,
-    ) -> anyhow::Result<Self>;
+    async fn new(config: Self::Config, sm: RaftDataClient<Self::R>) -> anyhow::Result<Self>;
 
-    async fn leader_lifecycle_start(&mut self) -> anyhow::Result<()>;
+    fn leader_lifecycle_service_builder(
+        &mut self,
+    ) -> Vec<(String, Arc<dyn LeaderLifecycleServiceBuilder>)>;
 
-    async fn leader_lifecycle_stop(&mut self) -> anyhow::Result<()>;
+    fn static_lifecycle_service_builder(
+        &mut self,
+    ) -> Vec<(String, Arc<dyn StaticLifecycleServiceBuilder>)>;
 
     async fn shutdown(self) -> anyhow::Result<()>;
-}
-
-#[async_trait]
-pub trait LeaderLifecycleService: Send {
-    async fn run(&self, cancel: CancellationToken);
-}
-
-pub trait LeaderLifecycleServiceBuilder {
-    fn build(&self) -> Box<dyn LeaderLifecycleService>;
 }
