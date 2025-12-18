@@ -83,7 +83,7 @@ mod tests {
         type C = MockApplication;
 
         fn export(&self) -> Snapshot {
-            Snapshot::default()
+            Snapshot
         }
 
         fn import(_snapshot: Snapshot) -> Result<Self, DecodeError> {

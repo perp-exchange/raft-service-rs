@@ -57,7 +57,7 @@ where
 
         for (name, builder) in application.static_lifecycle_service_builder() {
             let mut svc = builder.build();
-            svc.on_start().await;
+            svc.on_start();
             static_lifecycle_services.push((name.clone(), svc));
 
             debug!(name, "Static lifecycle service started");
@@ -128,7 +128,7 @@ where
 
         // Shutdown static lifecycle services
         for (name, mut svc) in static_lifecycle_services {
-            svc.on_shutdown().await;
+            svc.on_shutdown();
             debug!(name, "Static lifecycle service stopped");
         }
 
