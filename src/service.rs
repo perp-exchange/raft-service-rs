@@ -1,7 +1,11 @@
-pub trait LeaderLifecycleService: Send {
-    fn on_leader_start(&mut self);
+use std::sync::Arc;
 
-    fn on_leader_stop(&mut self);
+use tokio_util::sync::CancellationToken;
+use tonic::async_trait;
+
+#[async_trait]
+pub trait LeaderLifecycleService: Send {
+    async fn on_leader_start(&self, shutdown: Arc<CancellationToken>);
 }
 
 pub trait StaticLifecycleService: Send {

@@ -132,15 +132,15 @@ mod service {
     }
 
     mod writing_service {
-        use std::cell::OnceCell;
+        use std::sync::Arc;
         use std::time::Duration;
 
         use raft_service_rs::server::RaftDataClient;
         use raft_service_rs::service::LeaderLifecycleService;
         use raft_service_rs::service::LeaderLifecycleServiceBuilder;
-        use tokio::runtime::Handle;
         use tokio::time::sleep;
         use tokio_util::sync::CancellationToken;
+        use tonic::async_trait;
         use tracing::error;
         use tracing::info;
 
@@ -149,50 +149,30 @@ mod service {
 
         pub struct WritingService {
             raft_client: RaftDataClient<KeyValueData>,
-            shutdown: OnceCell<CancellationToken>,
-            handle: OnceCell<tokio::task::JoinHandle<()>>,
         }
 
+        #[async_trait]
         impl LeaderLifecycleService for WritingService {
-            fn on_leader_start(&mut self) {
-                let shutdown = CancellationToken::new();
+            async fn on_leader_start(&self, shutdown: Arc<CancellationToken>) {
+                let raft_client = self.raft_client.clone();
 
-                self.shutdown
-                    .set(shutdown.clone())
-                    .expect("Failed to set shutdown token");
+                let mut start = 0;
 
-                self.handle
-                    .set(tokio::spawn({
-                        let raft_client = self.raft_client.clone();
+                while !shutdown.is_cancelled() {
+                    let request = Request {
+                        key: start.to_string(),
+                        value: start.to_string(),
+                    };
 
-                        async move {
-                            let mut start = 0;
+                    info!(node_id = raft_client.node_id(), ?request);
 
-                            while !shutdown.is_cancelled() {
-                                let request = Request {
-                                    key: start.to_string(),
-                                    value: start.to_string(),
-                                };
+                    if let Err(e) = raft_client.write(request).await {
+                        error!(?e);
+                    }
 
-                                info!(node_id = raft_client.node_id(), ?request);
-
-                                if let Err(e) = raft_client.write(request).await {
-                                    error!(?e);
-                                }
-
-                                sleep(Duration::from_secs(1)).await;
-                                start += 1;
-                            }
-                        }
-                    }))
-                    .expect("Failed to set join handle");
-            }
-
-            fn on_leader_stop(&mut self) {
-                self.shutdown.get().unwrap().cancel();
-                let handle = self.handle.take().unwrap();
-
-                tokio::task::spawn_blocking(|| Handle::current().block_on(handle));
+                    sleep(Duration::from_secs(1)).await;
+                    start += 1;
+                }
             }
         }
 
@@ -210,23 +190,21 @@ mod service {
             fn build(&self) -> Box<dyn LeaderLifecycleService> {
                 Box::new(WritingService {
                     raft_client: self.raft_client.clone(),
-                    shutdown: OnceCell::new(),
-                    handle: OnceCell::new(),
                 })
             }
         }
     }
 
     mod reading_service {
-        use std::cell::OnceCell;
+        use std::sync::Arc;
         use std::time::Duration;
 
         use raft_service_rs::server::RaftDataClient;
         use raft_service_rs::service::LeaderLifecycleService;
         use raft_service_rs::service::LeaderLifecycleServiceBuilder;
-        use tokio::runtime::Handle;
         use tokio::time::sleep;
         use tokio_util::sync::CancellationToken;
+        use tonic::async_trait;
         use tracing::error;
         use tracing::info;
 
@@ -234,45 +212,23 @@ mod service {
 
         pub struct ReadingService {
             raft_client: RaftDataClient<KeyValueData>,
-            shutdown: OnceCell<CancellationToken>,
-            handle: OnceCell<tokio::task::JoinHandle<()>>,
         }
 
+        #[async_trait]
         impl LeaderLifecycleService for ReadingService {
-            fn on_leader_start(&mut self) {
-                let shutdown = CancellationToken::new();
-
-                self.shutdown
-                    .set(shutdown.clone())
-                    .expect("Failed to set shutdown token");
-
-                self.handle
-                    .set(tokio::spawn({
-                        let raft_client = self.raft_client.clone();
-
-                        async move {
-                            while !shutdown.is_cancelled() {
-                                match raft_client.read_safe(|store| store.map.len()).await {
-                                    Ok(len) => {
-                                        info!(node_id = raft_client.node_id(), len);
-                                    }
-                                    Err(e) => {
-                                        error!(?e);
-                                    }
-                                }
-
-                                sleep(Duration::from_secs(1)).await;
-                            }
+            async fn on_leader_start(&self, shutdown: Arc<CancellationToken>) {
+                while !shutdown.is_cancelled() {
+                    match self.raft_client.read_safe(|store| store.map.len()).await {
+                        Ok(len) => {
+                            info!(node_id = self.raft_client.node_id(), len);
                         }
-                    }))
-                    .expect("Failed to set join handle");
-            }
+                        Err(e) => {
+                            error!(?e);
+                        }
+                    }
 
-            fn on_leader_stop(&mut self) {
-                self.shutdown.get().unwrap().cancel();
-                let handle = self.handle.take().unwrap();
-
-                tokio::task::spawn_blocking(|| Handle::current().block_on(handle));
+                    sleep(Duration::from_secs(1)).await;
+                }
             }
         }
 
@@ -290,8 +246,6 @@ mod service {
             fn build(&self) -> Box<dyn LeaderLifecycleService> {
                 Box::new(ReadingService {
                     raft_client: self.raft_client.clone(),
-                    shutdown: OnceCell::new(),
-                    handle: OnceCell::new(),
                 })
             }
         }

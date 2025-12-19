@@ -64,40 +64,39 @@ where
         }
 
         let mut handle = {
-            let leader_lifecycle_services = Arc::new(Mutex::new(vec![]));
             let leader_lifecycle_service_builder = application.leader_lifecycle_service_builder();
+            let leader_cancel_token = Arc::new(Mutex::new(None::<Arc<CancellationToken>>));
 
             raft.on_leader_change(
                 {
-                    let leader_lifecycle_services = leader_lifecycle_services.clone();
+                    let leader_cancel_token = leader_cancel_token.clone();
 
                     move |leader_id| {
                         debug!(?leader_id, "Became leader");
 
-                        let mut leader_lifecycle_services =
-                            leader_lifecycle_services.lock().unwrap();
+                        let mut guard = leader_cancel_token.lock().unwrap();
+
+                        let shutdown = Arc::new(CancellationToken::new());
 
                         for (name, builder) in &leader_lifecycle_service_builder {
-                            let mut svc = builder.build();
-                            svc.on_leader_start();
-                            leader_lifecycle_services.push((name.clone(), svc));
+                            let builder = builder.clone();
+                            let svc = builder.build();
+                            let shutdown = shutdown.clone();
+                            tokio::spawn(async move { svc.on_leader_start(shutdown).await });
 
                             debug!(name, "Leader lifecycle service started");
                         }
+
+                        *guard = Some(shutdown.clone());
                     }
                 },
                 {
                     move |old_leader_id| {
                         debug!(?old_leader_id, "Stepped down from leader");
 
-                        let mut leader_lifecycle_services =
-                            leader_lifecycle_services.lock().unwrap();
-
-                        for (name, mut svc) in leader_lifecycle_services.drain(..) {
-                            svc.on_leader_stop();
-
-                            debug!(name, "Leader lifecycle service stopped");
-                        }
+                        let leader_cancel_token =
+                            leader_cancel_token.lock().unwrap().take().unwrap();
+                        leader_cancel_token.cancel();
                     }
                 },
             )
