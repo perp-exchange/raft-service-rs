@@ -8,10 +8,11 @@ pub trait LeaderLifecycleService: Send {
     async fn on_leader_start(&self, shutdown: Arc<CancellationToken>);
 }
 
+#[async_trait]
 pub trait StaticLifecycleService: Send {
-    fn on_start(&mut self);
+    async fn on_start(&mut self);
 
-    fn on_shutdown(&mut self);
+    async fn on_shutdown(&mut self);
 }
 
 pub trait LeaderLifecycleServiceBuilder: Send + Sync {
