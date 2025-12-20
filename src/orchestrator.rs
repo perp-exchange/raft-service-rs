@@ -56,7 +56,7 @@ where
 
         let mut static_lifecycle_services = JoinSet::new();
         for (name, builder) in application.static_lifecycle_service_builder() {
-            let svc = builder.build();
+            let mut svc = builder.build();
             let shutdown_token = shutdown_token.clone();
             static_lifecycle_services.spawn(async move { svc.start(shutdown_token).await });
 
