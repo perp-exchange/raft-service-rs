@@ -132,7 +132,6 @@ mod service {
     }
 
     mod writing_service {
-        use std::sync::Arc;
         use std::time::Duration;
 
         use raft_service_rs::server::RaftDataClient;
@@ -153,7 +152,7 @@ mod service {
 
         #[async_trait]
         impl LeaderLifecycleService for WritingService {
-            async fn on_leader_start(&self, shutdown: Arc<CancellationToken>) {
+            async fn on_leader_start(&self, shutdown: CancellationToken) {
                 let raft_client = self.raft_client.clone();
 
                 let mut start = 0;
@@ -196,7 +195,6 @@ mod service {
     }
 
     mod reading_service {
-        use std::sync::Arc;
         use std::time::Duration;
 
         use raft_service_rs::server::RaftDataClient;
@@ -216,7 +214,7 @@ mod service {
 
         #[async_trait]
         impl LeaderLifecycleService for ReadingService {
-            async fn on_leader_start(&self, shutdown: Arc<CancellationToken>) {
+            async fn on_leader_start(&self, shutdown: CancellationToken) {
                 while !shutdown.is_cancelled() {
                     match self.raft_client.read_safe(|store| store.map.len()).await {
                         Ok(len) => {

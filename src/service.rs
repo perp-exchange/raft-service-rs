@@ -1,18 +1,14 @@
-use std::sync::Arc;
-
 use tokio_util::sync::CancellationToken;
 use tonic::async_trait;
 
 #[async_trait]
 pub trait LeaderLifecycleService: Send {
-    async fn on_leader_start(&self, shutdown: Arc<CancellationToken>);
+    async fn on_leader_start(&self, shutdown: CancellationToken);
 }
 
 #[async_trait]
 pub trait StaticLifecycleService: Send {
-    async fn on_start(&mut self);
-
-    async fn on_shutdown(&mut self);
+    async fn start(&self, shutdown: CancellationToken);
 }
 
 pub trait LeaderLifecycleServiceBuilder: Send + Sync {

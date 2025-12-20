@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use anyhow::Context;
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::Server;
 use tracing::debug;
@@ -53,19 +54,18 @@ where
 
         let mut application = A::new(self.application_config, data_client).await?;
 
-        let mut static_lifecycle_services = vec![];
-
+        let mut static_lifecycle_services = JoinSet::new();
         for (name, builder) in application.static_lifecycle_service_builder() {
-            let mut svc = builder.build();
-            svc.on_start().await;
-            static_lifecycle_services.push((name.clone(), svc));
+            let svc = builder.build();
+            let shutdown_token = shutdown_token.clone();
+            static_lifecycle_services.spawn(async move { svc.start(shutdown_token).await });
 
             debug!(name, "Static lifecycle service started");
         }
 
         let mut handle = {
             let leader_lifecycle_service_builder = application.leader_lifecycle_service_builder();
-            let leader_cancel_token = Arc::new(Mutex::new(None::<Arc<CancellationToken>>));
+            let leader_cancel_token = Arc::new(Mutex::new(None::<CancellationToken>));
 
             raft.on_leader_change(
                 {
@@ -76,7 +76,7 @@ where
 
                         let mut guard = leader_cancel_token.lock().unwrap();
 
-                        let shutdown = Arc::new(CancellationToken::new());
+                        let shutdown = CancellationToken::new();
 
                         for (name, builder) in &leader_lifecycle_service_builder {
                             let builder = builder.clone();
@@ -126,9 +126,10 @@ where
         handle.close().await;
 
         // Shutdown static lifecycle services
-        for (name, mut svc) in static_lifecycle_services {
-            svc.on_shutdown().await;
-            debug!(name, "Static lifecycle service stopped");
+        while let Some(res) = static_lifecycle_services.join_next().await {
+            if let Err(e) = res {
+                debug!("Static lifecycle service failed: {:?}", e);
+            }
         }
 
         application.shutdown().await?;
