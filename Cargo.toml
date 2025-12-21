@@ -11,7 +11,7 @@ futures-util = "0.3.31"
 maplit = "1.0.2"
 openraft = { git = "https://github.com/databendlabs/openraft.git", rev = "c56d043b6f10d2c0665e2fb7d7f8b1c64488e1d1", features = ["serde"] }
 prost = "0.14.1"
-rocksdb = "0.24.0"
+rocksdb = { version = "0.24.0", default-features = false, features = ["bindgen-runtime"] }
 serde = "1.0.228"
 serde_json = "1.0.145"
 tokio = { version = "1.48.0", features = ["full"] }
