@@ -186,6 +186,10 @@ mod service {
         }
 
         impl LeaderLifecycleServiceBuilder for WritingServiceBuilder {
+            fn name(&self) -> &'static str {
+                "writing_service"
+            }
+
             fn build(&self) -> Box<dyn LeaderLifecycleService> {
                 Box::new(WritingService {
                     raft_client: self.raft_client.clone(),
@@ -241,6 +245,10 @@ mod service {
         }
 
         impl LeaderLifecycleServiceBuilder for ReadingServiceBuilder {
+            fn name(&self) -> &'static str {
+                "reading_service"
+            }
+
             fn build(&self) -> Box<dyn LeaderLifecycleService> {
                 Box::new(ReadingService {
                     raft_client: self.raft_client.clone(),
@@ -319,24 +327,14 @@ mod service {
             })
         }
 
-        fn leader_lifecycle_service_builder(
-            &mut self,
-        ) -> Vec<(String, Arc<dyn LeaderLifecycleServiceBuilder>)> {
+        fn leader_lifecycle_service_builder(&self) -> Vec<Arc<dyn LeaderLifecycleServiceBuilder>> {
             vec![
-                (
-                    "writing_service".to_string(),
-                    self.writing_service_builder.clone() as Arc<dyn LeaderLifecycleServiceBuilder>,
-                ),
-                (
-                    "reading_service".to_string(),
-                    self.reading_service_builder.clone() as Arc<dyn LeaderLifecycleServiceBuilder>,
-                ),
+                self.writing_service_builder.clone() as Arc<dyn LeaderLifecycleServiceBuilder>,
+                self.reading_service_builder.clone() as Arc<dyn LeaderLifecycleServiceBuilder>,
             ]
         }
 
-        fn static_lifecycle_service_builder(
-            &mut self,
-        ) -> Vec<(String, Arc<dyn StaticLifecycleServiceBuilder>)> {
+        fn static_lifecycle_service_builder(&self) -> Vec<Arc<dyn StaticLifecycleServiceBuilder>> {
             vec![]
         }
 

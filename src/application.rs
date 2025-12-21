@@ -36,13 +36,9 @@ pub trait ApplicationLayer: Sized + Send + Sync + 'static {
 
     async fn new(config: Self::Config, sm: RaftDataClient<Self::R>) -> anyhow::Result<Self>;
 
-    fn leader_lifecycle_service_builder(
-        &mut self,
-    ) -> Vec<(String, Arc<dyn LeaderLifecycleServiceBuilder>)>;
+    fn leader_lifecycle_service_builder(&self) -> Vec<Arc<dyn LeaderLifecycleServiceBuilder>>;
 
-    fn static_lifecycle_service_builder(
-        &mut self,
-    ) -> Vec<(String, Arc<dyn StaticLifecycleServiceBuilder>)>;
+    fn static_lifecycle_service_builder(&self) -> Vec<Arc<dyn StaticLifecycleServiceBuilder>>;
 
     async fn shutdown(self) -> anyhow::Result<()>;
 }

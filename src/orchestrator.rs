@@ -52,15 +52,15 @@ where
         let data_client = self.raft_server.data_client();
         let raft = self.raft_server.raft;
 
-        let mut application = A::new(self.application_config, data_client).await?;
+        let application = A::new(self.application_config, data_client).await?;
 
         let mut static_lifecycle_services = JoinSet::new();
-        for (name, builder) in application.static_lifecycle_service_builder() {
+        for builder in application.static_lifecycle_service_builder() {
             let mut svc = builder.build();
             let shutdown_token = shutdown_token.clone();
             static_lifecycle_services.spawn(async move { svc.start(shutdown_token).await });
 
-            debug!(name, "Static lifecycle service started");
+            debug!(name = builder.name(), "Static lifecycle service started");
         }
 
         let mut handle = {
@@ -78,13 +78,13 @@ where
 
                         let shutdown = CancellationToken::new();
 
-                        for (name, builder) in &leader_lifecycle_service_builder {
+                        for builder in &leader_lifecycle_service_builder {
                             let builder = builder.clone();
                             let svc = builder.build();
                             let shutdown = shutdown.clone();
                             tokio::spawn(async move { svc.on_leader_start(shutdown).await });
 
-                            debug!(name, "Leader lifecycle service started");
+                            debug!(name = builder.name(), "Leader lifecycle service started");
                         }
 
                         *guard = Some(shutdown.clone());

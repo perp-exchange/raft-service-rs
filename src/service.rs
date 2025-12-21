@@ -12,9 +12,11 @@ pub trait StaticLifecycleService: Send {
 }
 
 pub trait LeaderLifecycleServiceBuilder: Send + Sync {
+    fn name(&self) -> &'static str;
     fn build(&self) -> Box<dyn LeaderLifecycleService>;
 }
 
 pub trait StaticLifecycleServiceBuilder: Send + Sync {
+    fn name(&self) -> &'static str;
     fn build(&self) -> Box<dyn StaticLifecycleService>;
 }
