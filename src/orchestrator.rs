@@ -1,7 +1,9 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Context;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::Server;
@@ -65,20 +67,19 @@ where
 
         let mut handle = {
             let leader_cancel_token = Arc::new(Mutex::new(None::<CancellationToken>));
-            let leader_lifecycle_services_join_set = Arc::new(Mutex::new(None::<JoinSet<()>>));
+            let leader_lifecycle_services_map =
+                Arc::new(Mutex::new(None::<BTreeMap<&'static str, JoinHandle<()>>>));
 
             raft.on_leader_change(
                 {
                     let leader_cancel_token = leader_cancel_token.clone();
-                    let leader_lifecycle_services_join_set =
-                        leader_lifecycle_services_join_set.clone();
+                    let leader_lifecycle_services_map = leader_lifecycle_services_map.clone();
                     let leader_lifecycle_service_builder =
                         application.leader_lifecycle_service_builder();
 
                     move |leader_id| {
                         let leader_cancel_token = leader_cancel_token.clone();
-                        let leader_lifecycle_services_join_set =
-                            leader_lifecycle_services_join_set.clone();
+                        let leader_lifecycle_services_map = leader_lifecycle_services_map.clone();
                         let leader_lifecycle_service_builder =
                             leader_lifecycle_service_builder.clone();
 
@@ -87,27 +88,31 @@ where
 
                             let shutdown = CancellationToken::new();
 
-                            let mut join_set = JoinSet::new();
+                            let mut handles = BTreeMap::new();
 
                             for builder in &leader_lifecycle_service_builder {
+                                let name = builder.name();
                                 let builder = builder.clone();
                                 let svc = builder.build();
                                 let shutdown = shutdown.clone();
-                                join_set.spawn(async move { svc.on_leader_start(shutdown).await });
-
-                                debug!(name = builder.name(), "Leader lifecycle service started");
+                                handles.insert(
+                                    name,
+                                    tokio::spawn(
+                                        async move { svc.on_leader_start(shutdown).await },
+                                    ),
+                                );
+                                debug!(name, "Leader lifecycle service started");
                             }
 
                             *leader_cancel_token.lock().await = Some(shutdown.clone());
-                            *leader_lifecycle_services_join_set.lock().await = Some(join_set);
+                            *leader_lifecycle_services_map.lock().await = Some(handles);
                         }
                     }
                 },
                 {
                     move |old_leader_id| {
                         let leader_cancel_token = leader_cancel_token.clone();
-                        let leader_lifecycle_services_join_set =
-                            leader_lifecycle_services_join_set.clone();
+                        let leader_lifecycle_services_map = leader_lifecycle_services_map.clone();
 
                         async move {
                             debug!(?old_leader_id, "Stepped down from leader");
@@ -116,15 +121,11 @@ where
                                 leader_cancel_token.lock().await.take().unwrap();
                             leader_cancel_token.cancel();
 
-                            let mut join_set = leader_lifecycle_services_join_set
-                                .lock()
-                                .await
-                                .take()
-                                .unwrap();
-                            while let Some(res) = join_set.join_next().await {
-                                if let Err(e) = res {
-                                    debug!(?e, "Leader lifecycle service failed");
-                                }
+                            let leader_lifecycle_services_map =
+                                leader_lifecycle_services_map.lock().await.take().unwrap();
+                            for (name, handle) in leader_lifecycle_services_map {
+                                handle.await.unwrap();
+                                debug!(name, "Leader lifecycle service stopped");
                             }
                         }
                     }
