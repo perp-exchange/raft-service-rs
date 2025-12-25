@@ -19,6 +19,22 @@ use crate::server::RaftControlClient;
 use crate::server::RaftServer;
 use crate::server::RaftServiceConfig;
 
+async fn leader_services_shutdown(
+    leader_lifecycle_services: Arc<
+        Mutex<Option<(CancellationToken, BTreeMap<&'static str, JoinHandle<()>>)>>,
+    >,
+) {
+    if let Some((shutdown, handles)) = leader_lifecycle_services.lock().await.take() {
+        debug!("Shutting down leader lifecycle services");
+        shutdown.cancel();
+
+        for (name, handle) in handles {
+            handle.await.unwrap();
+            debug!(name, "Leader lifecycle service stopped");
+        }
+    }
+}
+
 pub struct RaftOrchestrator<A: ApplicationLayer> {
     application_config: A::Config,
     raft_config: RaftServiceConfig,
@@ -65,21 +81,19 @@ where
             debug!(name = builder.name(), "Static lifecycle service started");
         }
 
+        let leader_lifecycle_services = Arc::new(Mutex::new(None));
+
         let mut handle = {
-            let leader_cancel_token = Arc::new(Mutex::new(None::<CancellationToken>));
-            let leader_lifecycle_services_map =
-                Arc::new(Mutex::new(None::<BTreeMap<&'static str, JoinHandle<()>>>));
+            let leader_lifecycle_services = leader_lifecycle_services.clone();
 
             raft.on_leader_change(
                 {
-                    let leader_cancel_token = leader_cancel_token.clone();
-                    let leader_lifecycle_services_map = leader_lifecycle_services_map.clone();
+                    let leader_lifecycle_services = leader_lifecycle_services.clone();
                     let leader_lifecycle_service_builder =
                         application.leader_lifecycle_service_builder();
 
                     move |leader_id| {
-                        let leader_cancel_token = leader_cancel_token.clone();
-                        let leader_lifecycle_services_map = leader_lifecycle_services_map.clone();
+                        let leader_lifecycle_services = leader_lifecycle_services.clone();
                         let leader_lifecycle_service_builder =
                             leader_lifecycle_service_builder.clone();
 
@@ -87,7 +101,6 @@ where
                             debug!(?leader_id, "Became leader");
 
                             let shutdown = CancellationToken::new();
-
                             let mut handles = BTreeMap::new();
 
                             for builder in &leader_lifecycle_service_builder {
@@ -104,29 +117,18 @@ where
                                 debug!(name, "Leader lifecycle service started");
                             }
 
-                            *leader_cancel_token.lock().await = Some(shutdown.clone());
-                            *leader_lifecycle_services_map.lock().await = Some(handles);
+                            *leader_lifecycle_services.lock().await = Some((shutdown, handles));
                         }
                     }
                 },
                 {
                     move |old_leader_id| {
-                        let leader_cancel_token = leader_cancel_token.clone();
-                        let leader_lifecycle_services_map = leader_lifecycle_services_map.clone();
+                        let leader_lifecycle_services = leader_lifecycle_services.clone();
 
                         async move {
                             debug!(?old_leader_id, "Stepped down from leader");
 
-                            let leader_cancel_token =
-                                leader_cancel_token.lock().await.take().unwrap();
-                            leader_cancel_token.cancel();
-
-                            let leader_lifecycle_services_map =
-                                leader_lifecycle_services_map.lock().await.take().unwrap();
-                            for (name, handle) in leader_lifecycle_services_map {
-                                handle.await.unwrap();
-                                debug!(name, "Leader lifecycle service stopped");
-                            }
+                            leader_services_shutdown(leader_lifecycle_services).await;
                         }
                     }
                 },
@@ -154,6 +156,7 @@ where
         shutdown_token.cancelled().await;
 
         // Shutdown leader lifecycle services
+        leader_services_shutdown(leader_lifecycle_services).await;
         handle.close().await;
 
         // Shutdown static lifecycle services
