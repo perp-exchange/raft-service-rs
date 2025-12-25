@@ -10,9 +10,9 @@ use tracing::info;
 
 use crate::application::ApplicationConfig;
 use crate::application::ApplicationStateMachine;
-use crate::raft::config::type_config::CheckIsLeaderError;
 use crate::raft::config::type_config::ClientWriteError;
 use crate::raft::config::type_config::ClientWriteResponse;
+use crate::raft::config::type_config::LinearizableReadError;
 use crate::raft::config::type_config::Node;
 use crate::raft::config::type_config::NodeId;
 use crate::raft::config::type_config::Raft;
@@ -70,7 +70,7 @@ where
     pub async fn read_safe<R>(
         &self,
         f: impl FnOnce(&A) -> R,
-    ) -> Result<R, RaftError<A::C, CheckIsLeaderError<A::C>>> {
+    ) -> Result<R, RaftError<A::C, LinearizableReadError<A::C>>> {
         let ret = self
             .raft
             .get_read_linearizer(openraft::ReadPolicy::ReadIndex)

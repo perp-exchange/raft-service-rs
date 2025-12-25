@@ -57,6 +57,6 @@ pub(crate) type RaftError<C, E> = openraft::error::RaftError<TypeConfig<C>, E>;
 pub(crate) type RPCError<C> = openraft::error::RPCError<TypeConfig<C>>;
 pub(crate) type StreamingError<C> = openraft::error::StreamingError<TypeConfig<C>>;
 pub(crate) type ClientWriteError<C> = openraft::error::ClientWriteError<TypeConfig<C>>;
-pub(crate) type CheckIsLeaderError<C> = openraft::error::CheckIsLeaderError<TypeConfig<C>>;
+pub(crate) type LinearizableReadError<C> = openraft::error::LinearizableReadError<TypeConfig<C>>;
 
 pub(crate) type EntryPayload<C> = openraft::entry::EntryPayload<TypeConfig<C>>;

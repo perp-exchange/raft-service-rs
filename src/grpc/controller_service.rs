@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use openraft::async_runtime::WatchReceiver;
 use tonic::Request;
 use tonic::Response;
 use tonic::Status;
@@ -131,7 +132,7 @@ where
         _request: Request<()>,
     ) -> Result<Response<pb::controller::MetricsResponse>, Status> {
         debug!("Collecting metrics");
-        let metrics = self.raft_node.metrics().borrow().clone();
+        let metrics = self.raft_node.metrics().borrow_watched().clone();
         let resp = pb::controller::MetricsResponse {
             membership: Some(metrics.membership_config.membership().clone().into()),
             other_metrics: metrics.to_string(),

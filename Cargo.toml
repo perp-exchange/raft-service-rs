@@ -9,7 +9,7 @@ byteorder = "1.5.0"
 derive_more = { version = "2.0.1", features = ["display"] }
 futures-util = "0.3.31"
 maplit = "1.0.2"
-openraft = { git = "https://github.com/databendlabs/openraft.git", rev = "c56d043b6f10d2c0665e2fb7d7f8b1c64488e1d1", features = ["serde"] }
+openraft = { git = "https://github.com/databendlabs/openraft.git", rev = "af54d69accf9d0fb9daff0239d79a98ade57053f", features = ["serde"] }
 prost = "0.14.1"
 rocksdb = { version = "0.24.0", default-features = false, features = ["bindgen-runtime"] }
 serde = "1.0.228"
