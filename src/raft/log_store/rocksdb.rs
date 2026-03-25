@@ -39,6 +39,12 @@ pub(in crate::raft) struct RocksLogStore<C> {
 
 impl<C: RaftTypeConfig> RocksLogStore<C> {
     pub(in crate::raft) fn new<P: AsRef<Path>>(path: P) -> Result<Self, io::Error> {
+        if path.as_ref().exists() {
+            println!("Opening existing RocksDB at {:?}", path.as_ref());
+        } else {
+            println!("Creating new RocksDB at {:?}", path.as_ref());
+        }
+
         let mut opts = Options::default();
         opts.create_missing_column_families(true);
         opts.create_if_missing(true);
