@@ -7,7 +7,10 @@ use crate::pb::internal::Vote as PbVote;
 use crate::raft::config::type_config::LeaderId;
 use crate::raft::config::type_config::TypeConfig;
 
-impl<C: ApplicationConfig> RaftVote<TypeConfig<C>> for PbVote {
+impl<C> RaftVote<TypeConfig<C>> for PbVote
+where
+    C: ApplicationConfig,
+{
     fn from_leader_id(leader_id: LeaderId<C>, committed: bool) -> Self {
         Self {
             leader_id: Some(leader_id),

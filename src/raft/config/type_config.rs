@@ -10,7 +10,10 @@ use crate::application::ApplicationConfig;
 use crate::pb;
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd)]
-pub struct TypeConfig<C: ApplicationConfig> {
+pub struct TypeConfig<C>
+where
+    C: ApplicationConfig,
+{
     _mark: PhantomData<C>,
 }
 
@@ -54,6 +57,7 @@ pub(crate) type SnapshotResponse<C> = openraft::raft::SnapshotResponse<TypeConfi
 pub(crate) type ClientWriteResponse<C> = openraft::raft::ClientWriteResponse<TypeConfig<C>>;
 
 pub(crate) type RaftError<C, E> = openraft::error::RaftError<TypeConfig<C>, E>;
+pub(crate) type InitializeError<C> = openraft::error::InitializeError<TypeConfig<C>>;
 pub(crate) type RPCError<C> = openraft::error::RPCError<TypeConfig<C>>;
 pub(crate) type StreamingError<C> = openraft::error::StreamingError<TypeConfig<C>>;
 pub(crate) type ClientWriteError<C> = openraft::error::ClientWriteError<TypeConfig<C>>;

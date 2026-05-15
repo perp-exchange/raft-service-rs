@@ -23,11 +23,9 @@ use rocksdb::DB;
 use rocksdb::Direction;
 use tokio::task::spawn_blocking;
 
+use crate::raft::store::LOGS_COLUMN;
+use crate::raft::store::META_COLUMN;
 use crate::raft::store::log::meta::StoreMeta;
-
-pub const STORE_COLUMN: &str = "store";
-pub const META_COLUMN: &str = "meta";
-pub const LOGS_COLUMN: &str = "logs";
 
 #[derive(Clone)]
 pub struct RocksLogStore<C> {
@@ -54,7 +52,10 @@ where
         self.db.cf_handle(LOGS_COLUMN).unwrap()
     }
 
-    fn get_meta<M: StoreMeta<C>>(&self) -> Result<Option<M::Value>, io::Error> {
+    fn get_meta<M>(&self) -> Result<Option<M::Value>, io::Error>
+    where
+        M: StoreMeta<C>,
+    {
         let bytes = self
             .db
             .get_cf(self.cf_meta(), M::KEY)
@@ -70,7 +71,10 @@ where
         Ok(Some(t))
     }
 
-    fn put_meta<M: StoreMeta<C>>(&self, value: &M::Value) -> Result<(), io::Error> {
+    fn put_meta<M>(&self, value: &M::Value) -> Result<(), io::Error>
+    where
+        M: StoreMeta<C>,
+    {
         let json_value =
             serde_json::to_vec(value).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
@@ -82,11 +86,14 @@ where
     }
 }
 
-impl<C: RaftTypeConfig> RaftLogReader<C> for RocksLogStore<C> {
-    async fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug + OptionalSend>(
-        &mut self,
-        range: RB,
-    ) -> Result<Vec<EntryOf<C>>, io::Error> {
+impl<C> RaftLogReader<C> for RocksLogStore<C>
+where
+    C: RaftTypeConfig,
+{
+    async fn try_get_log_entries<RB>(&mut self, range: RB) -> Result<Vec<EntryOf<C>>, io::Error>
+    where
+        RB: RangeBounds<u64> + Clone + Debug + OptionalSend,
+    {
         let start = match range.start_bound() {
             std::ops::Bound::Included(x) => id_to_bin(*x),
             std::ops::Bound::Excluded(x) => id_to_bin(*x + 1),
@@ -122,7 +129,10 @@ impl<C: RaftTypeConfig> RaftLogReader<C> for RocksLogStore<C> {
     }
 }
 
-impl<C: RaftTypeConfig> RaftLogStorage<C> for RocksLogStore<C> {
+impl<C> RaftLogStorage<C> for RocksLogStore<C>
+where
+    C: RaftTypeConfig,
+{
     type LogReader = Self;
 
     async fn get_log_state(&mut self) -> Result<LogState<C>, io::Error> {
@@ -228,7 +238,10 @@ mod meta {
     use serde::Serialize;
     use serde::de::DeserializeOwned;
 
-    pub trait StoreMeta<C: RaftTypeConfig> {
+    pub trait StoreMeta<C>
+    where
+        C: RaftTypeConfig,
+    {
         const KEY: &'static str;
 
         type Value: Serialize + DeserializeOwned;

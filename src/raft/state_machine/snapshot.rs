@@ -22,12 +22,20 @@ where
     pub(crate) data: SnapshotData<C>,
 }
 
-impl<A> RaftSnapshotBuilder<TypeConfig<A::C>> for StateMachineStore<A>
+impl<A> RaftSnapshotBuilder<TypeConfig<A::Config>> for StateMachineStore<A>
 where
     A: ApplicationStateMachine,
 {
-    async fn build_snapshot(&mut self) -> Result<Snapshot<A::C>, io::Error> {
-        let data = serde_json::to_vec(&&self.state_machine.application_data.read().await.export())?;
+    async fn build_snapshot(&mut self) -> Result<Snapshot<A::Config>, io::Error> {
+        let data = serde_json::to_vec(
+            &self
+                .state_machine
+                .application_data
+                .read()
+                .await
+                .export()
+                .map_err(io::Error::other)?,
+        )?;
         let last_applied_log = self.state_machine.last_applied_log;
         let last_membership = self.state_machine.last_membership.clone();
 

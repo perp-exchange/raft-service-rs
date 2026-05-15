@@ -5,7 +5,10 @@ use crate::pb::common::Membership as PbMembership;
 use crate::pb::common::NodeIdSet;
 use crate::raft::config::type_config::Membership;
 
-impl<C: ApplicationConfig> From<PbMembership> for Membership<C> {
+impl<C> From<PbMembership> for Membership<C>
+where
+    C: ApplicationConfig,
+{
     fn from(membership: PbMembership) -> Self {
         let mut configs = vec![];
         for c in membership.configs {
@@ -17,7 +20,10 @@ impl<C: ApplicationConfig> From<PbMembership> for Membership<C> {
     }
 }
 
-impl<C: ApplicationConfig> From<Membership<C>> for PbMembership {
+impl<C> From<Membership<C>> for PbMembership
+where
+    C: ApplicationConfig,
+{
     fn from(membership: Membership<C>) -> Self {
         let mut configs = vec![];
         for c in membership.get_joint_config() {

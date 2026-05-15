@@ -16,13 +16,19 @@ impl Display for Entry {
     }
 }
 
-impl<C: ApplicationConfig> RaftPayload<TypeConfig<C>> for Entry {
+impl<C> RaftPayload<TypeConfig<C>> for Entry
+where
+    C: ApplicationConfig,
+{
     fn get_membership(&self) -> Option<Membership<C>> {
         self.membership.clone().map(Into::into)
     }
 }
 
-impl<C: ApplicationConfig> RaftEntry<TypeConfig<C>> for Entry {
+impl<C> RaftEntry<TypeConfig<C>> for Entry
+where
+    C: ApplicationConfig,
+{
     fn new(log_id: LogId<C>, payload: EntryPayload<C>) -> Self {
         let mut app_data = None;
         let mut membership = None;

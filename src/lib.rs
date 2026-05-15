@@ -2,7 +2,6 @@ pub mod application;
 pub mod error;
 pub mod orchestrator;
 pub mod server;
-pub mod service;
 
 mod grpc;
 mod raft;

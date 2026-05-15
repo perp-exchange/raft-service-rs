@@ -43,7 +43,10 @@ where
     Ok(RaftServiceClient::new(channel))
 }
 
-pub(in crate::raft) struct GRPCNetworkConnection<C: ApplicationConfig> {
+pub struct GRPCNetworkConnection<C>
+where
+    C: ApplicationConfig,
+{
     target_node: Node<C>,
 }
 
@@ -51,7 +54,7 @@ impl<C> GRPCNetworkConnection<C>
 where
     C: ApplicationConfig,
 {
-    pub(super) fn new(target_node: Node<C>) -> Self {
+    pub fn new(target_node: Node<C>) -> Self {
         Self { target_node }
     }
 }

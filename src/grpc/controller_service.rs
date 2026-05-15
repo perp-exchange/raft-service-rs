@@ -14,7 +14,10 @@ use crate::pb::{self};
 use crate::raft::config::type_config::Node;
 use crate::raft::config::type_config::Raft;
 
-pub(crate) struct RaftControllerServiceImpl<C: ApplicationConfig> {
+pub struct RaftControllerServiceImpl<C>
+where
+    C: ApplicationConfig,
+{
     raft_node: Raft<C>,
 }
 
@@ -22,7 +25,7 @@ impl<C> RaftControllerServiceImpl<C>
 where
     C: ApplicationConfig,
 {
-    pub(crate) fn new(raft_node: Raft<C>) -> Self {
+    pub fn new(raft_node: Raft<C>) -> Self {
         RaftControllerServiceImpl { raft_node }
     }
 }

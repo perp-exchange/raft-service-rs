@@ -106,16 +106,15 @@ mod service {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use prost::DecodeError;
     use raft_service_rs::Node;
     use raft_service_rs::application::ApplicationConfig;
     use raft_service_rs::application::ApplicationLayer;
     use raft_service_rs::application::ApplicationStateMachine;
+    use raft_service_rs::application::LeaderLifecycleServiceBuilder;
+    use raft_service_rs::application::StaticLifecycleServiceBuilder;
     use raft_service_rs::orchestrator::RaftOrchestrator;
     use raft_service_rs::server::RaftDataClient;
     use raft_service_rs::server::RaftServiceConfig;
-    use raft_service_rs::service::LeaderLifecycleServiceBuilder;
-    use raft_service_rs::service::StaticLifecycleServiceBuilder;
     use serde::Deserialize;
     use serde::Serialize;
     use tokio_util::sync::CancellationToken;
@@ -134,9 +133,9 @@ mod service {
     mod writing_service {
         use std::time::Duration;
 
+        use raft_service_rs::application::LeaderLifecycleService;
+        use raft_service_rs::application::LeaderLifecycleServiceBuilder;
         use raft_service_rs::server::RaftDataClient;
-        use raft_service_rs::service::LeaderLifecycleService;
-        use raft_service_rs::service::LeaderLifecycleServiceBuilder;
         use tokio::time::sleep;
         use tokio_util::sync::CancellationToken;
         use tonic::async_trait;
@@ -201,9 +200,9 @@ mod service {
     mod reading_service {
         use std::time::Duration;
 
+        use raft_service_rs::application::LeaderLifecycleService;
+        use raft_service_rs::application::LeaderLifecycleServiceBuilder;
         use raft_service_rs::server::RaftDataClient;
-        use raft_service_rs::service::LeaderLifecycleService;
-        use raft_service_rs::service::LeaderLifecycleServiceBuilder;
         use tokio::time::sleep;
         use tokio_util::sync::CancellationToken;
         use tonic::async_trait;
@@ -286,21 +285,25 @@ mod service {
         map: HashMap<String, String>,
     }
 
+    #[derive(thiserror::Error, Debug)]
+    pub enum StateMachineError {}
+
     #[async_trait]
     impl ApplicationStateMachine for KeyValueData {
-        type C = KeyValueConfig;
+        type Config = KeyValueConfig;
+        type Error = StateMachineError;
 
-        fn export(&self) -> Snapshot {
-            Snapshot {
+        fn export(&self) -> Result<Snapshot, StateMachineError> {
+            Ok(Snapshot {
                 map: self.map.clone(),
-            }
+            })
         }
 
-        fn import(snapshot: Snapshot) -> Result<Self, DecodeError> {
+        fn import(snapshot: Snapshot) -> Result<Self, Self::Error> {
             Ok(KeyValueData { map: snapshot.map })
         }
 
-        async fn apply(&mut self, request: Request) -> anyhow::Result<Response> {
+        async fn apply(&mut self, request: Request) -> Result<Response, Self::Error> {
             self.map.insert(request.key, request.value);
 
             Ok(Response)
@@ -312,15 +315,19 @@ mod service {
         reading_service_builder: Arc<ReadingServiceBuilder>,
     }
 
+    #[derive(thiserror::Error, Debug)]
+    pub enum Error {}
+
     #[async_trait]
     impl ApplicationLayer for KeyValueService {
-        type R = KeyValueData;
         type Config = ();
+        type StateMachine = KeyValueData;
+        type Error = Error;
 
         async fn new(
             _config: Self::Config,
-            raft_client: RaftDataClient<Self::R>,
-        ) -> anyhow::Result<Self> {
+            raft_client: RaftDataClient<Self::StateMachine>,
+        ) -> Result<Self, Self::Error> {
             Ok(KeyValueService {
                 writing_service_builder: Arc::new(WritingServiceBuilder::new(raft_client.clone())),
                 reading_service_builder: Arc::new(ReadingServiceBuilder::new(raft_client)),
@@ -338,7 +345,7 @@ mod service {
             vec![]
         }
 
-        async fn shutdown(self) -> anyhow::Result<()> {
+        async fn shutdown(self) -> Result<(), Self::Error> {
             Ok(())
         }
     }

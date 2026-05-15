@@ -2,7 +2,10 @@ use crate::application::ApplicationConfig;
 use crate::pb::internal::AppendEntriesResponse as PbAppendEntriesResponse;
 use crate::raft::config::type_config::AppendEntriesResponse;
 
-impl<C: ApplicationConfig> From<PbAppendEntriesResponse> for AppendEntriesResponse<C> {
+impl<C> From<PbAppendEntriesResponse> for AppendEntriesResponse<C>
+where
+    C: ApplicationConfig,
+{
     fn from(resp: PbAppendEntriesResponse) -> Self {
         if let Some(higher) = resp.rejected_by {
             return AppendEntriesResponse::HigherVote(higher);
@@ -20,7 +23,10 @@ impl<C: ApplicationConfig> From<PbAppendEntriesResponse> for AppendEntriesRespon
     }
 }
 
-impl<C: ApplicationConfig> From<AppendEntriesResponse<C>> for PbAppendEntriesResponse {
+impl<C> From<AppendEntriesResponse<C>> for PbAppendEntriesResponse
+where
+    C: ApplicationConfig,
+{
     fn from(resp: AppendEntriesResponse<C>) -> Self {
         match resp {
             AppendEntriesResponse::Success => Self {

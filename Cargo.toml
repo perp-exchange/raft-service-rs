@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.100"
 byteorder = "1.5.0"
 derive_more = { version = "2.0.1", features = ["display"] }
 futures-util = "0.3.31"
@@ -14,6 +13,7 @@ prost = "0.14.1"
 rocksdb = { version = "0.24.0", default-features = false, features = ["bindgen-runtime"] }
 serde = "1.0.228"
 serde_json = "1.0.145"
+thiserror = "2.0.18"
 tokio = { version = "1.48.0", features = ["full"] }
 tokio-stream = "0.1.17"
 tokio-util = { version = "0.7.16", features = ["full"] }
@@ -26,5 +26,5 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tonic-prost-build = "0.14.1"
 
 [dev-dependencies]
+anyhow = "1.0.102"
 tempfile = "3.23.0"
-

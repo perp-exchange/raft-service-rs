@@ -9,17 +9,17 @@ use rocksdb::Options;
 use crate::application::ApplicationStateMachine;
 use crate::raft::config::type_config::TypeConfig;
 use crate::raft::state_machine::store::StateMachineStore;
-use crate::raft::store::log::LOGS_COLUMN;
-use crate::raft::store::log::META_COLUMN;
 use crate::raft::store::log::RocksLogStore;
-use crate::raft::store::log::STORE_COLUMN;
 
 pub(crate) mod log;
-pub(crate) mod snapshot;
+
+pub const STORE_COLUMN: &str = "store";
+pub const META_COLUMN: &str = "meta";
+pub const LOGS_COLUMN: &str = "logs";
 
 pub async fn new_storage<SM, P>(
     path: P,
-) -> Result<(RocksLogStore<TypeConfig<SM::C>>, StateMachineStore<SM>), io::Error>
+) -> Result<(RocksLogStore<TypeConfig<SM::Config>>, StateMachineStore<SM>), io::Error>
 where
     SM: ApplicationStateMachine,
     P: AsRef<Path>,

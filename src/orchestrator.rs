@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use anyhow::Context;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::task::JoinSet;
@@ -11,6 +10,8 @@ use tracing::debug;
 
 use crate::application::ApplicationLayer;
 use crate::application::ApplicationStateMachine;
+use crate::error::RaftError;
+use crate::error::RaftOrchestratorError;
 use crate::grpc::controller_service::RaftControllerServiceImpl;
 use crate::grpc::internal_service::RaftServiceImpl;
 use crate::pb::controller::raft_controller_service_server::RaftControllerServiceServer;
@@ -19,11 +20,10 @@ use crate::server::RaftControlClient;
 use crate::server::RaftServer;
 use crate::server::RaftServiceConfig;
 
-async fn leader_services_shutdown(
-    leader_lifecycle_services: Arc<
-        Mutex<Option<(CancellationToken, BTreeMap<&'static str, JoinHandle<()>>)>>,
-    >,
-) {
+type LeaderServices =
+    Arc<Mutex<Option<(CancellationToken, BTreeMap<&'static str, JoinHandle<()>>)>>>;
+
+async fn leader_services_shutdown(leader_lifecycle_services: LeaderServices) {
     if let Some((shutdown, handles)) = leader_lifecycle_services.lock().await.take() {
         debug!("Shutting down leader lifecycle services");
         shutdown.cancel();
@@ -35,23 +35,27 @@ async fn leader_services_shutdown(
     }
 }
 
-pub struct RaftOrchestrator<A: ApplicationLayer> {
-    application_config: A::Config,
-    raft_config: RaftServiceConfig,
-    raft_server: RaftServer<A::R>,
-}
-
-impl<A> RaftOrchestrator<A>
+pub struct RaftOrchestrator<A>
 where
     A: ApplicationLayer,
 {
+    application_config: A::Config,
+    raft_config: RaftServiceConfig,
+    raft_server: RaftServer<A::StateMachine>,
+}
+
+impl<Application> RaftOrchestrator<Application>
+where
+    Application: ApplicationLayer,
+{
     pub async fn new(
         raft_config: RaftServiceConfig,
-        application_config: A::Config,
-    ) -> anyhow::Result<Self> {
-        let raft_server = RaftServer::new_from_config(&raft_config)
-            .await
-            .context("Failed to create raft_server")?;
+        application_config: Application::Config,
+    ) -> Result<
+        Self,
+        RaftOrchestratorError<<Application::StateMachine as ApplicationStateMachine>::Config>,
+    > {
+        let raft_server = RaftServer::new_from_config(&raft_config).await?;
 
         Ok(RaftOrchestrator {
             application_config,
@@ -60,17 +64,25 @@ where
         })
     }
 
-    pub async fn get_controller_client(
+    pub fn get_controller_client(
         &self,
-    ) -> RaftControlClient<<A::R as ApplicationStateMachine>::C> {
+    ) -> RaftControlClient<<Application::StateMachine as ApplicationStateMachine>::Config> {
         self.raft_server.control_client()
     }
 
-    pub async fn run(self, shutdown_token: CancellationToken) -> anyhow::Result<()> {
+    pub async fn run(
+        self,
+        shutdown_token: CancellationToken,
+    ) -> Result<
+        (),
+        RaftOrchestratorError<<Application::StateMachine as ApplicationStateMachine>::Config>,
+    > {
         let data_client = self.raft_server.data_client();
-        let raft = self.raft_server.raft;
+        let raft = self.raft_server.raft();
 
-        let application = A::new(self.application_config, data_client).await?;
+        let application = Application::new(self.application_config, data_client)
+            .await
+            .map_err(|err| RaftOrchestratorError::Application(Box::new(err)))?;
 
         let mut static_lifecycle_services = JoinSet::new();
         for builder in application.static_lifecycle_service_builder() {
@@ -136,7 +148,14 @@ where
         };
 
         // Raft internal service and control service
-        let internal = tokio::spawn({
+        let internal: JoinHandle<
+            Result<
+                (),
+                RaftOrchestratorError<
+                    <Application::StateMachine as ApplicationStateMachine>::Config,
+                >,
+            >,
+        > = tokio::spawn({
             let shutdown_token = shutdown_token.clone();
             let addr = self.raft_config.rpc_url.parse()?;
             let raft = raft.clone();
@@ -147,9 +166,10 @@ where
                         RaftControllerServiceImpl::new(raft),
                     ))
                     .serve_with_shutdown(addr, shutdown_token.cancelled())
-                    .await?;
+                    .await
+                    .map_err(|err| RaftOrchestratorError::Orchestration(Box::new(err)))?;
 
-                anyhow::Ok(())
+                Ok(())
             }
         });
 
@@ -166,10 +186,18 @@ where
             }
         }
 
-        application.shutdown().await?;
+        application
+            .shutdown()
+            .await
+            .map_err(|err| RaftOrchestratorError::Application(Box::new(err)))?;
 
-        internal.await??;
-        raft.shutdown().await?;
+        internal
+            .await
+            .map_err(|err| RaftOrchestratorError::Orchestration(Box::new(err)))??;
+
+        raft.shutdown()
+            .await
+            .map_err(|err| RaftError::Unknown(Box::new(err)))?;
 
         Ok(())
     }

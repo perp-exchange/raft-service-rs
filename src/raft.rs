@@ -5,22 +5,23 @@ use openraft::Config;
 use tokio::sync::RwLock;
 
 use crate::application::ApplicationStateMachine;
+use crate::error::RaftError;
 use crate::raft::config::type_config::NodeId;
 use crate::raft::config::type_config::Raft;
 use crate::raft::network::grpc::GRPCNetwork;
 use crate::raft::store::new_storage;
 
 pub(crate) mod config;
-pub(crate) mod state_machine;
-pub(crate) mod store;
 
 mod network;
 mod pb_impl;
+mod state_machine;
+mod store;
 
 pub async fn new_raft<A>(
-    node_id: NodeId<A::C>,
+    node_id: NodeId<A::Config>,
     path: &Path,
-) -> anyhow::Result<(Arc<RwLock<A>>, Raft<A::C>)>
+) -> Result<(Arc<RwLock<A>>, Raft<A::Config>), RaftError<A::Config>>
 where
     A: ApplicationStateMachine,
 {
@@ -48,10 +49,10 @@ where
 mod tests {
     use openraft::testing::log::StoreBuilder;
     use openraft::testing::log::Suite;
-    use prost::DecodeError;
     use serde::Deserialize;
     use serde::Serialize;
     use tempfile::TempDir;
+    use thiserror::Error;
     use tonic::async_trait;
 
     use crate::application::ApplicationConfig;
@@ -61,6 +62,9 @@ mod tests {
     use crate::raft::state_machine::store::StateMachineStore;
     use crate::raft::store::log::RocksLogStore;
     use crate::raft::store::new_storage;
+
+    #[derive(Error, Debug)]
+    enum Error {}
 
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
     struct MockApplication {}
@@ -82,22 +86,23 @@ mod tests {
 
     #[async_trait]
     impl ApplicationStateMachine for MockApplication {
-        type C = MockApplication;
+        type Config = MockApplication;
+        type Error = Error;
 
-        fn export(&self) -> Snapshot {
-            Snapshot
+        fn export(&self) -> Result<Snapshot, Self::Error> {
+            Ok(Snapshot)
         }
 
-        fn import(_snapshot: Snapshot) -> Result<Self, DecodeError> {
+        fn import(_snapshot: Snapshot) -> Result<Self, Self::Error> {
             Ok(MockApplication::default())
         }
 
-        async fn apply(&mut self, _request: Request) -> anyhow::Result<Response> {
+        async fn apply(&mut self, _request: Request) -> Result<Response, Self::Error> {
             Ok(Response)
         }
     }
 
-    struct RocksStoreBuilder {}
+    struct RocksStoreBuilder;
 
     impl
         StoreBuilder<
@@ -128,9 +133,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_store_with_rocks() -> anyhow::Result<()> {
-        Suite::test_all(RocksStoreBuilder {}).await?;
-
-        Ok(())
+    async fn test_store_with_rocks() {
+        Suite::test_all(RocksStoreBuilder).await.unwrap();
     }
 }

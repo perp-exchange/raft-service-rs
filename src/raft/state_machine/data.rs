@@ -10,8 +10,8 @@ pub struct StateMachineData<A>
 where
     A: ApplicationStateMachine,
 {
-    pub(crate) last_applied_log: Option<LogId<A::C>>,
-    pub(crate) last_membership: StoredMembership<A::C>,
+    pub(crate) last_applied_log: Option<LogId<A::Config>>,
+    pub(crate) last_membership: StoredMembership<A::Config>,
     pub(crate) application_data: Arc<RwLock<A>>,
 }
 
@@ -21,7 +21,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            last_applied_log: self.last_applied_log.clone(),
+            last_applied_log: self.last_applied_log,
             last_membership: self.last_membership.clone(),
             application_data: self.application_data.clone(),
         }

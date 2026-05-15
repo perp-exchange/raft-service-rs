@@ -50,9 +50,9 @@ async fn main() -> anyhow::Result<()> {
 mod writing_service {
     use std::time::Duration;
 
+    use raft_service_rs::application::LeaderLifecycleService;
+    use raft_service_rs::application::LeaderLifecycleServiceBuilder;
     use raft_service_rs::server::RaftDataClient;
-    use raft_service_rs::service::LeaderLifecycleService;
-    use raft_service_rs::service::LeaderLifecycleServiceBuilder;
     use tokio::time::sleep;
     use tokio_util::sync::CancellationToken;
     use tonic::async_trait;
@@ -69,7 +69,6 @@ mod writing_service {
     #[async_trait]
     impl LeaderLifecycleService for WritingService {
         async fn on_leader_start(&self, shutdown: CancellationToken) {
-            println!("writing service is on");
             let raft_client = self.raft_client.clone();
 
             let mut start = 0;
@@ -123,18 +122,19 @@ mod application {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use prost::DecodeError;
     use raft_service_rs::Node;
     use raft_service_rs::application::ApplicationConfig;
     use raft_service_rs::application::ApplicationLayer;
     use raft_service_rs::application::ApplicationStateMachine;
+    use raft_service_rs::application::LeaderLifecycleServiceBuilder;
+    use raft_service_rs::application::StaticLifecycleServiceBuilder;
+    use raft_service_rs::error::RaftOrchestratorError;
     use raft_service_rs::orchestrator::RaftOrchestrator;
     use raft_service_rs::server::RaftDataClient;
     use raft_service_rs::server::RaftServiceConfig;
-    use raft_service_rs::service::LeaderLifecycleServiceBuilder;
-    use raft_service_rs::service::StaticLifecycleServiceBuilder;
     use serde::Deserialize;
     use serde::Serialize;
+    use thiserror::Error;
     use tokio::task::JoinHandle;
     use tokio_util::sync::CancellationToken;
     use tonic::async_trait;
@@ -171,21 +171,25 @@ mod application {
         map: HashMap<u64, Vec<u8>>,
     }
 
+    #[derive(Error, Debug)]
+    pub enum StateMachineError {}
+
     #[async_trait]
     impl ApplicationStateMachine for KeyValueData {
-        type C = KeyValueConfig;
+        type Config = KeyValueConfig;
+        type Error = StateMachineError;
 
-        fn export(&self) -> Snapshot {
-            Snapshot {
+        fn export(&self) -> Result<Snapshot, Self::Error> {
+            Ok(Snapshot {
                 map: self.map.clone(),
-            }
+            })
         }
 
-        fn import(snapshot: Snapshot) -> Result<Self, DecodeError> {
+        fn import(snapshot: Snapshot) -> Result<Self, Self::Error> {
             Ok(KeyValueData { map: snapshot.map })
         }
 
-        async fn apply(&mut self, request: Request) -> anyhow::Result<Response> {
+        async fn apply(&mut self, request: Request) -> Result<Response, Self::Error> {
             self.map.insert(request.key, request.value);
 
             Ok(Response)
@@ -196,15 +200,19 @@ mod application {
         writing_service_builder: Arc<WritingServiceBuilder>,
     }
 
+    #[derive(Error, Debug)]
+    enum Error {}
+
     #[async_trait]
     impl ApplicationLayer for KeyValueService {
-        type R = KeyValueData;
         type Config = ();
+        type StateMachine = KeyValueData;
+        type Error = Error;
 
         async fn new(
             _config: Self::Config,
-            raft_client: RaftDataClient<Self::R>,
-        ) -> anyhow::Result<Self> {
+            raft_client: RaftDataClient<Self::StateMachine>,
+        ) -> Result<Self, Self::Error> {
             Ok(KeyValueService {
                 writing_service_builder: Arc::new(WritingServiceBuilder::new(raft_client.clone())),
             })
@@ -218,7 +226,7 @@ mod application {
             vec![]
         }
 
-        async fn shutdown(self) -> anyhow::Result<()> {
+        async fn shutdown(self) -> Result<(), Self::Error> {
             Ok(())
         }
     }
@@ -241,16 +249,15 @@ mod application {
         pub async fn run(
             self,
             shutdown: CancellationToken,
-        ) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
+        ) -> anyhow::Result<JoinHandle<Result<(), RaftOrchestratorError<KeyValueConfig>>>> {
             let orchestrator =
                 RaftOrchestrator::<KeyValueService>::new(self.raft_config.clone(), ()).await?;
 
-            let controller_client = orchestrator.get_controller_client().await;
+            let controller_client = orchestrator.get_controller_client();
 
             let handle = tokio::spawn(orchestrator.run(shutdown));
 
             if !controller_client.is_initialized().await? {
-                println!("{}", line!());
                 info!("Initialize cluster with single node");
                 controller_client
                     .initialize(HashMap::from([(
