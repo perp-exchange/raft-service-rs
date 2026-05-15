@@ -145,6 +145,7 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+      - uses: arduino/setup-protoc@v3
       - uses: Swatinem/rust-cache@v2
       - name: test
         run: cargo nextest run --all-features
