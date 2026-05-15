@@ -35,7 +35,7 @@ where
         .validate()?,
     );
 
-    let network = GRPCNetwork::default();
+    let network = GRPCNetwork;
 
     let (log_store, state_machine) = new_storage(path).await?;
 
