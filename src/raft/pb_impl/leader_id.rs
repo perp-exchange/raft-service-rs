@@ -44,7 +44,10 @@ impl fmt::Display for LeaderId {
     }
 }
 
-impl<C: ApplicationConfig> RaftLeaderId<TypeConfig<C>> for LeaderId {
+impl<C> RaftLeaderId<TypeConfig<C>> for LeaderId
+where
+    C: ApplicationConfig,
+{
     type Committed = u64;
 
     fn new(term: Term<C>, node_id: NodeId<C>) -> Self {

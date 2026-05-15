@@ -13,16 +13,16 @@ use crate::raft::config::type_config::Snapshot;
 use crate::raft::config::type_config::SnapshotMeta;
 use crate::raft::config::type_config::StoredMembership;
 
-pub(crate) struct RaftServiceImpl<C: ApplicationConfig> {
-    raft_node: Raft<C>,
-}
+pub struct RaftServiceImpl<C>(Raft<C>)
+where
+    C: ApplicationConfig;
 
 impl<C> RaftServiceImpl<C>
 where
     C: ApplicationConfig,
 {
-    pub(crate) fn new(raft_node: Raft<C>) -> Self {
-        RaftServiceImpl { raft_node }
+    pub fn new(raft_node: Raft<C>) -> Self {
+        RaftServiceImpl(raft_node)
     }
 }
 
@@ -34,7 +34,7 @@ where
     /// Vote handles vote requests between Raft nodes during leader election
     async fn vote(&self, request: Request<VoteRequest>) -> Result<Response<VoteResponse>, Status> {
         let response = self
-            .raft_node
+            .0
             .vote(request.into_inner().into())
             .await
             .map_err(|e| Status::internal(format!("Vote operation failed: {e}")))?;
@@ -48,7 +48,7 @@ where
         request: Request<AppendEntriesRequest>,
     ) -> Result<Response<AppendEntriesResponse>, Status> {
         let response = self
-            .raft_node
+            .0
             .append_entries(request.into_inner().into())
             .await
             .map_err(|e| Status::internal(format!("Append entries operation failed: {e}")))?;
@@ -103,7 +103,7 @@ where
         };
 
         let resp = self
-            .raft_node
+            .0
             .install_full_snapshot(vote, snapshot)
             .await
             .map_err(|e| Status::internal(format!("Snapshot installation failed: {e}")))?;

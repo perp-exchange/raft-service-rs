@@ -2,10 +2,9 @@ pub mod application;
 pub mod error;
 pub mod orchestrator;
 pub mod server;
-pub mod service;
 
-pub(crate) mod grpc;
-pub(crate) mod raft;
+mod grpc;
+mod raft;
 
 pub mod pb {
     pub mod controller {

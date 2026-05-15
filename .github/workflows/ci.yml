@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
   RUSTFLAGS: -Dwarnings
@@ -131,20 +131,21 @@ jobs:
               exit 1
           fi
 
-  # test:
-  #   name: test
-  #   needs: basics
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v5
-  #     - name: Install Rust ${{ env.RUST_STABLE }}
-  #       uses: actions-rs/toolchain@v1
-  #       with:
-  #         toolchain: ${{ env.RUST_STABLE }}
-  #     - name: Install cargo-nextest
-  #       uses: taiki-e/install-action@v2
-  #       with:
-  #         tool: cargo-nextest
-  #     - uses: Swatinem/rust-cache@v2
-  #     - name: test
-  #       run: cargo nextest run --all-features
+  test:
+    name: test
+    needs: basics
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust ${{ env.RUST_STABLE }}
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_STABLE }}
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - uses: arduino/setup-protoc@v3
+      - uses: Swatinem/rust-cache@v2
+      - name: test
+        run: cargo nextest run --all-features

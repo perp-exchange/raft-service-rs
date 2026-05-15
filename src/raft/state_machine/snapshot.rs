@@ -1,8 +1,8 @@
 use std::io;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use openraft::RaftSnapshotBuilder;
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::application::ApplicationConfig;
 use crate::application::ApplicationStateMachine;
@@ -12,36 +12,42 @@ use crate::raft::config::type_config::SnapshotMeta;
 use crate::raft::config::type_config::TypeConfig;
 use crate::raft::state_machine::store::StateMachineStore;
 
-pub(super) struct StoredSnapshot<C: ApplicationConfig> {
-    pub(super) meta: SnapshotMeta<C>,
-    pub(super) data: SnapshotData<C>,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(bound = "")]
+pub struct StoredSnapshot<C>
+where
+    C: ApplicationConfig,
+{
+    pub(crate) meta: SnapshotMeta<C>,
+    pub(crate) data: SnapshotData<C>,
 }
 
-impl<A: ApplicationStateMachine> RaftSnapshotBuilder<TypeConfig<A::C>>
-    for Arc<StateMachineStore<A>>
+impl<A> RaftSnapshotBuilder<TypeConfig<A::Config>> for StateMachineStore<A>
+where
+    A: ApplicationStateMachine,
 {
-    async fn build_snapshot(&mut self) -> Result<Snapshot<A::C>, io::Error> {
-        let state_machine = self.state_machine.read().await;
+    async fn build_snapshot(&mut self) -> Result<Snapshot<A::Config>, io::Error> {
+        let data = serde_json::to_vec(
+            &self
+                .state_machine
+                .application_data
+                .read()
+                .await
+                .export()
+                .map_err(io::Error::other)?,
+        )?;
+        let last_applied_log = self.state_machine.last_applied_log;
+        let last_membership = self.state_machine.last_membership.clone();
 
-        let data = serde_json::to_vec(&state_machine.application_data.export())?;
-        let last_applied_log = state_machine.last_applied_log;
-        let last_membership = state_machine.last_membership.clone();
-
-        // Lock the current snapshot before releasing the lock on the state machine, to avoid a race
-        // condition on the written snapshot
-        let mut current_snapshot = self.current_snapshot.write().await;
-        drop(state_machine);
-
-        let snapshot_idx = self.snapshot_idx.fetch_add(1, Ordering::Relaxed) + 1;
         let snapshot_id = if let Some(last) = last_applied_log {
             format!(
                 "{}-{}-{}",
                 last.committed_leader_id(),
                 last.index(),
-                snapshot_idx
+                self.snapshot_idx
             )
         } else {
-            format!("--{snapshot_idx}")
+            format!("--{}", self.snapshot_idx)
         };
 
         let meta = SnapshotMeta {
@@ -55,7 +61,7 @@ impl<A: ApplicationStateMachine> RaftSnapshotBuilder<TypeConfig<A::C>>
             data: data.clone(),
         };
 
-        *current_snapshot = Some(snapshot);
+        self.set_current_snapshot_(snapshot)?;
 
         Ok(Snapshot {
             meta,

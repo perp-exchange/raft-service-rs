@@ -2,7 +2,10 @@ use crate::application::ApplicationConfig;
 use crate::pb::internal::AppendEntriesRequest as PbAppendEntriesRequest;
 use crate::raft::config::type_config::AppendEntriesRequest;
 
-impl<C: ApplicationConfig> From<AppendEntriesRequest<C>> for PbAppendEntriesRequest {
+impl<C> From<AppendEntriesRequest<C>> for PbAppendEntriesRequest
+where
+    C: ApplicationConfig,
+{
     fn from(req: AppendEntriesRequest<C>) -> Self {
         Self {
             vote: Some(req.vote),
@@ -13,7 +16,10 @@ impl<C: ApplicationConfig> From<AppendEntriesRequest<C>> for PbAppendEntriesRequ
     }
 }
 
-impl<C: ApplicationConfig> From<PbAppendEntriesRequest> for AppendEntriesRequest<C> {
+impl<C> From<PbAppendEntriesRequest> for AppendEntriesRequest<C>
+where
+    C: ApplicationConfig,
+{
     fn from(req: PbAppendEntriesRequest) -> Self {
         Self {
             vote: req.vote.unwrap(),

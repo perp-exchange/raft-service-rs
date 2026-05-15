@@ -2,7 +2,10 @@ use crate::application::ApplicationConfig;
 use crate::pb::internal::VoteResponse as PbVoteResponse;
 use crate::raft::config::type_config::VoteResponse;
 
-impl<C: ApplicationConfig> From<PbVoteResponse> for VoteResponse<C> {
+impl<C> From<PbVoteResponse> for VoteResponse<C>
+where
+    C: ApplicationConfig,
+{
     fn from(resp: PbVoteResponse) -> Self {
         VoteResponse::new(
             resp.vote.unwrap(),
@@ -12,7 +15,10 @@ impl<C: ApplicationConfig> From<PbVoteResponse> for VoteResponse<C> {
     }
 }
 
-impl<C: ApplicationConfig> From<VoteResponse<C>> for PbVoteResponse {
+impl<C> From<VoteResponse<C>> for PbVoteResponse
+where
+    C: ApplicationConfig,
+{
     fn from(resp: VoteResponse<C>) -> Self {
         Self {
             vote: Some(resp.vote),

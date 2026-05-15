@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use std::io;
 use std::marker::PhantomData;
 use std::ops::RangeBounds;
-use std::path::Path;
 use std::sync::Arc;
 
 use byteorder::BigEndian;
@@ -20,40 +19,29 @@ use openraft::type_config::alias::EntryOf;
 use openraft::type_config::alias::LogIdOf;
 use openraft::type_config::alias::VoteOf;
 use rocksdb::ColumnFamily;
-use rocksdb::ColumnFamilyDescriptor;
 use rocksdb::DB;
 use rocksdb::Direction;
-use rocksdb::Options;
 use tokio::task::spawn_blocking;
 
-use crate::raft::log_store::rocksdb::meta::StoreMeta;
-
-const META_COLUMN: &str = "meta";
-const LOGS_COLUMN: &str = "logs";
+use crate::raft::store::LOGS_COLUMN;
+use crate::raft::store::META_COLUMN;
+use crate::raft::store::log::meta::StoreMeta;
 
 #[derive(Clone)]
-pub(in crate::raft) struct RocksLogStore<C> {
+pub struct RocksLogStore<C> {
     db: Arc<DB>,
     _mark: PhantomData<C>,
 }
 
-impl<C: RaftTypeConfig> RocksLogStore<C> {
-    pub(in crate::raft) fn new<P: AsRef<Path>>(path: P) -> Result<Self, io::Error> {
-        let mut opts = Options::default();
-        opts.create_missing_column_families(true);
-        opts.create_if_missing(true);
-
-        let cfs = vec![
-            ColumnFamilyDescriptor::new(META_COLUMN, Options::default()),
-            ColumnFamilyDescriptor::new(LOGS_COLUMN, Options::default()),
-        ];
-
-        let db = Arc::new(DB::open_cf_descriptors(&opts, path, cfs).map_err(io::Error::other)?);
-
-        Ok(RocksLogStore {
+impl<C> RocksLogStore<C>
+where
+    C: RaftTypeConfig,
+{
+    pub fn new(db: Arc<DB>) -> Self {
+        Self {
             db,
             _mark: PhantomData,
-        })
+        }
     }
 
     fn cf_meta(&self) -> &ColumnFamily {
@@ -64,7 +52,10 @@ impl<C: RaftTypeConfig> RocksLogStore<C> {
         self.db.cf_handle(LOGS_COLUMN).unwrap()
     }
 
-    fn get_meta<M: StoreMeta<C>>(&self) -> Result<Option<M::Value>, io::Error> {
+    fn get_meta<M>(&self) -> Result<Option<M::Value>, io::Error>
+    where
+        M: StoreMeta<C>,
+    {
         let bytes = self
             .db
             .get_cf(self.cf_meta(), M::KEY)
@@ -80,7 +71,10 @@ impl<C: RaftTypeConfig> RocksLogStore<C> {
         Ok(Some(t))
     }
 
-    fn put_meta<M: StoreMeta<C>>(&self, value: &M::Value) -> Result<(), io::Error> {
+    fn put_meta<M>(&self, value: &M::Value) -> Result<(), io::Error>
+    where
+        M: StoreMeta<C>,
+    {
         let json_value =
             serde_json::to_vec(value).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
@@ -92,11 +86,14 @@ impl<C: RaftTypeConfig> RocksLogStore<C> {
     }
 }
 
-impl<C: RaftTypeConfig> RaftLogReader<C> for RocksLogStore<C> {
-    async fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug + OptionalSend>(
-        &mut self,
-        range: RB,
-    ) -> Result<Vec<EntryOf<C>>, io::Error> {
+impl<C> RaftLogReader<C> for RocksLogStore<C>
+where
+    C: RaftTypeConfig,
+{
+    async fn try_get_log_entries<RB>(&mut self, range: RB) -> Result<Vec<EntryOf<C>>, io::Error>
+    where
+        RB: RangeBounds<u64> + Clone + Debug + OptionalSend,
+    {
         let start = match range.start_bound() {
             std::ops::Bound::Included(x) => id_to_bin(*x),
             std::ops::Bound::Excluded(x) => id_to_bin(*x + 1),
@@ -132,7 +129,10 @@ impl<C: RaftTypeConfig> RaftLogReader<C> for RocksLogStore<C> {
     }
 }
 
-impl<C: RaftTypeConfig> RaftLogStorage<C> for RocksLogStore<C> {
+impl<C> RaftLogStorage<C> for RocksLogStore<C>
+where
+    C: RaftTypeConfig,
+{
     type LogReader = Self;
 
     async fn get_log_state(&mut self) -> Result<LogState<C>, io::Error> {
@@ -217,6 +217,8 @@ impl<C: RaftTypeConfig> RaftLogStorage<C> for RocksLogStore<C> {
     }
 
     async fn purge(&mut self, log_id: LogIdOf<C>) -> Result<(), io::Error> {
+        tracing::debug!("delete_log: [0, {:?}]", log_id);
+
         self.put_meta::<meta::LastPurged>(&log_id)?;
 
         let from = id_to_bin(0);
@@ -236,7 +238,10 @@ mod meta {
     use serde::Serialize;
     use serde::de::DeserializeOwned;
 
-    pub trait StoreMeta<C: RaftTypeConfig> {
+    pub trait StoreMeta<C>
+    where
+        C: RaftTypeConfig,
+    {
         const KEY: &'static str;
 
         type Value: Serialize + DeserializeOwned;

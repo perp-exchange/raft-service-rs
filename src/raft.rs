@@ -2,25 +2,29 @@ use std::path::Path;
 use std::sync::Arc;
 
 use openraft::Config;
+use tokio::sync::RwLock;
 
 use crate::application::ApplicationStateMachine;
+use crate::error::RaftError;
 use crate::raft::config::type_config::NodeId;
 use crate::raft::config::type_config::Raft;
-use crate::raft::log_store::rocksdb::RocksLogStore;
 use crate::raft::network::grpc::GRPCNetwork;
-use crate::raft::state_machine::store::StateMachineStore;
+use crate::raft::store::new_storage;
 
 pub(crate) mod config;
-pub(crate) mod state_machine;
 
-mod log_store;
 mod network;
 mod pb_impl;
+mod state_machine;
+mod store;
 
-pub async fn new_raft<A: ApplicationStateMachine>(
-    node_id: NodeId<A::C>,
+pub async fn new_raft<A>(
+    node_id: NodeId<A::Config>,
     path: &Path,
-) -> anyhow::Result<(Arc<StateMachineStore<A>>, Raft<A::C>)> {
+) -> Result<(Arc<RwLock<A>>, Raft<A::Config>), RaftError<A::Config>>
+where
+    A: ApplicationStateMachine,
+{
     let config = Arc::new(
         Config {
             heartbeat_interval: 500,
@@ -31,34 +35,36 @@ pub async fn new_raft<A: ApplicationStateMachine>(
         .validate()?,
     );
 
-    let network = GRPCNetwork::default();
-    let log_store = RocksLogStore::new(path)?;
-    let state_machine = Arc::new(StateMachineStore::<A>::default());
+    let network = GRPCNetwork;
+
+    let (log_store, state_machine) = new_storage(path).await?;
 
     Ok((
-        state_machine.clone(),
+        state_machine.state_machine.application_data.clone(),
         openraft::Raft::new(node_id, config, network, log_store, state_machine).await?,
     ))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use openraft::testing::log::StoreBuilder;
     use openraft::testing::log::Suite;
-    use prost::DecodeError;
     use serde::Deserialize;
     use serde::Serialize;
     use tempfile::TempDir;
+    use thiserror::Error;
     use tonic::async_trait;
 
     use crate::application::ApplicationConfig;
     use crate::application::ApplicationStateMachine;
-    use crate::raft::RocksLogStore;
     use crate::raft::config::type_config::StorageError;
     use crate::raft::config::type_config::TypeConfig;
     use crate::raft::state_machine::store::StateMachineStore;
+    use crate::raft::store::log::RocksLogStore;
+    use crate::raft::store::new_storage;
+
+    #[derive(Error, Debug)]
+    enum Error {}
 
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
     struct MockApplication {}
@@ -80,28 +86,29 @@ mod tests {
 
     #[async_trait]
     impl ApplicationStateMachine for MockApplication {
-        type C = MockApplication;
+        type Config = MockApplication;
+        type Error = Error;
 
-        fn export(&self) -> Snapshot {
-            Snapshot
+        fn export(&self) -> Result<Snapshot, Self::Error> {
+            Ok(Snapshot)
         }
 
-        fn import(_snapshot: Snapshot) -> Result<Self, DecodeError> {
+        fn import(_snapshot: Snapshot) -> Result<Self, Self::Error> {
             Ok(MockApplication::default())
         }
 
-        async fn apply(&mut self, _request: Request) -> anyhow::Result<Response> {
+        async fn apply(&mut self, _request: Request) -> Result<Response, Self::Error> {
             Ok(Response)
         }
     }
 
-    struct RocksStoreBuilder {}
+    struct RocksStoreBuilder;
 
     impl
         StoreBuilder<
             TypeConfig<MockApplication>,
             RocksLogStore<TypeConfig<MockApplication>>,
-            Arc<StateMachineStore<MockApplication>>,
+            StateMachineStore<MockApplication>,
             (),
         > for RocksStoreBuilder
     {
@@ -111,24 +118,22 @@ mod tests {
             (
                 (),
                 RocksLogStore<TypeConfig<MockApplication>>,
-                Arc<StateMachineStore<MockApplication>>,
+                StateMachineStore<MockApplication>,
             ),
             StorageError<MockApplication>,
         > {
             let tmp_dir = TempDir::new().map_err(|e| StorageError::read_logs(&e))?;
 
-            Ok((
-                (),
-                RocksLogStore::new(tmp_dir.path()).map_err(|e| StorageError::read_logs(&e))?,
-                Arc::default(),
-            ))
+            let (log_store, state_machine) = new_storage(tmp_dir.path())
+                .await
+                .map_err(|e| StorageError::read_logs(&e))?;
+
+            Ok(((), log_store, state_machine))
         }
     }
 
     #[tokio::test]
-    async fn test_store_with_rocks() -> anyhow::Result<()> {
-        Suite::test_all(RocksStoreBuilder {}).await?;
-
-        Ok(())
+    async fn test_store_with_rocks() {
+        Suite::test_all(RocksStoreBuilder).await.unwrap();
     }
 }

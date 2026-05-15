@@ -1,6 +1,5 @@
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 
 use futures_util::Stream;
 use futures_util::TryStreamExt;
@@ -9,8 +8,10 @@ use openraft::OptionalSend;
 use openraft::entry::RaftEntry;
 use openraft::storage::EntryResponder;
 use openraft::storage::RaftStateMachine;
-use tokio::sync::RwLock;
+use rocksdb::ColumnFamily;
+use rocksdb::DB;
 
+use crate::application::ApplicationConfig;
 use crate::application::ApplicationStateMachine;
 use crate::raft::config::type_config::LogId;
 use crate::raft::config::type_config::Snapshot;
@@ -21,54 +22,140 @@ use crate::raft::config::type_config::StoredMembership;
 use crate::raft::config::type_config::TypeConfig;
 use crate::raft::state_machine::data::StateMachineData;
 use crate::raft::state_machine::snapshot::StoredSnapshot;
+use crate::raft::store::STORE_COLUMN;
 
-#[derive(Default)]
-pub(crate) struct StateMachineStore<A: ApplicationStateMachine> {
-    pub(crate) state_machine: RwLock<StateMachineData<A>>,
-    pub(super) snapshot_idx: AtomicU64,
-    pub(super) current_snapshot: RwLock<Option<StoredSnapshot<A::C>>>,
+pub struct StateMachineStore<A>
+where
+    A: ApplicationStateMachine,
+{
+    pub(crate) state_machine: StateMachineData<A>,
+    pub(crate) snapshot_idx: u64,
+    pub(crate) db: Arc<DB>,
 }
 
-impl<A: ApplicationStateMachine> RaftStateMachine<TypeConfig<A::C>> for Arc<StateMachineStore<A>> {
+impl<A> Clone for StateMachineStore<A>
+where
+    A: ApplicationStateMachine,
+{
+    fn clone(&self) -> Self {
+        Self {
+            state_machine: self.state_machine.clone(),
+            snapshot_idx: self.snapshot_idx,
+            db: self.db.clone(),
+        }
+    }
+}
+
+impl<A> StateMachineStore<A>
+where
+    A: ApplicationStateMachine,
+{
+    pub async fn new(db: Arc<DB>) -> Result<Self, io::Error> {
+        let mut sm = Self {
+            state_machine: StateMachineData {
+                last_applied_log: None,
+                last_membership: Default::default(),
+                application_data: Arc::new(Default::default()),
+            },
+            snapshot_idx: 0,
+            db,
+        };
+
+        let snapshot = sm.get_current_snapshot_()?;
+        if let Some(snap) = snapshot {
+            sm.update_state_machine_(snap).await?;
+        }
+
+        Ok(sm)
+    }
+
+    async fn update_state_machine_(
+        &mut self,
+        snapshot: StoredSnapshot<A::Config>,
+    ) -> Result<(), io::Error> {
+        self.state_machine.last_applied_log = snapshot.meta.last_log_id;
+        self.state_machine.last_membership = snapshot.meta.last_membership.clone();
+        {
+            let data: <A::Config as ApplicationConfig>::Snapshot =
+                serde_json::from_slice(&snapshot.data)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            let data =
+                A::import(data).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+            let mut application_data = self.state_machine.application_data.write().await;
+            *application_data = data;
+        }
+
+        Ok(())
+    }
+
+    fn get_current_snapshot_(&self) -> Result<Option<StoredSnapshot<A::Config>>, io::Error> {
+        Ok(self
+            .db
+            .get_cf(self.store(), b"snapshot")
+            .map_err(io::Error::other)?
+            .and_then(|v| serde_json::from_slice(&v).ok()))
+    }
+
+    pub fn set_current_snapshot_(&self, snap: StoredSnapshot<A::Config>) -> Result<(), io::Error> {
+        self.db
+            .put_cf(
+                self.store(),
+                b"snapshot",
+                serde_json::to_vec(&snap).unwrap().as_slice(),
+            )
+            .map_err(io::Error::other)?;
+        self.db.flush_wal(true).map_err(io::Error::other)?;
+        Ok(())
+    }
+
+    fn store(&self) -> &ColumnFamily {
+        self.db.cf_handle(STORE_COLUMN).unwrap()
+    }
+}
+
+impl<A> RaftStateMachine<TypeConfig<A::Config>> for StateMachineStore<A>
+where
+    A: ApplicationStateMachine,
+{
     type SnapshotBuilder = Self;
 
     async fn applied_state(
         &mut self,
-    ) -> Result<(Option<LogId<A::C>>, StoredMembership<A::C>), io::Error> {
-        let state_machine = self.state_machine.read().await;
-
+    ) -> Result<(Option<LogId<A::Config>>, StoredMembership<A::Config>), io::Error> {
         Ok((
-            state_machine.last_applied_log,
-            state_machine.last_membership.clone(),
+            self.state_machine.last_applied_log,
+            self.state_machine.last_membership.clone(),
         ))
     }
 
     async fn apply<Strm>(&mut self, mut entries: Strm) -> Result<(), io::Error>
     where
-        Strm: Stream<Item = Result<EntryResponder<TypeConfig<A::C>>, io::Error>>
+        Strm: Stream<Item = Result<EntryResponder<TypeConfig<A::Config>>, io::Error>>
             + Unpin
             + OptionalSend,
     {
-        let mut state_machine = self.state_machine.write().await;
-
         while let Some((entry, response)) = entries.try_next().await? {
             let log_id = entry.log_id();
 
-            state_machine.last_applied_log = Some(log_id);
+            self.state_machine.last_applied_log = Some(log_id);
 
             let value = if let Some(req) = entry.app_data {
                 let req = serde_json::from_slice(req.as_slice())
                     .map_err(|e| StorageError::apply(log_id, &e))?;
 
-                let response = state_machine
+                let response = self
+                    .state_machine
                     .application_data
+                    .write()
+                    .await
                     .apply(req)
                     .await
                     .map_err(|e| StorageError::apply(log_id, AnyError::error(e.to_string())))?;
 
                 Some(response)
             } else if let Some(membership) = entry.membership {
-                state_machine.last_membership =
+                self.state_machine.last_membership =
                     StoredMembership::new(Some(log_id), membership.into());
 
                 None
@@ -87,54 +174,36 @@ impl<A: ApplicationStateMachine> RaftStateMachine<TypeConfig<A::C>> for Arc<Stat
     }
 
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
+        self.snapshot_idx += 1;
         self.clone()
     }
 
-    async fn begin_receiving_snapshot(&mut self) -> Result<SnapshotData<A::C>, io::Error> {
+    async fn begin_receiving_snapshot(&mut self) -> Result<SnapshotData<A::Config>, io::Error> {
         Ok(Default::default())
     }
 
     async fn install_snapshot(
         &mut self,
-        meta: &SnapshotMeta<A::C>,
-        snapshot: SnapshotData<A::C>,
+        meta: &SnapshotMeta<A::Config>,
+        snapshot: SnapshotData<A::Config>,
     ) -> Result<(), io::Error> {
         let new_snapshot = StoredSnapshot {
             meta: meta.clone(),
             data: snapshot,
         };
 
-        // Install state_machine
-        {
-            let snapshot = serde_json::from_slice(new_snapshot.data.as_slice()).map_err(|e| {
-                StorageError::read_snapshot(Some(new_snapshot.meta.signature()), &e)
-            })?;
-            let application_data = A::import(snapshot).map_err(|e| {
-                StorageError::read_snapshot(Some(new_snapshot.meta.signature()), &e)
-            })?;
+        self.update_state_machine_(new_snapshot.clone()).await?;
 
-            *self.state_machine.write().await = StateMachineData {
-                last_applied_log: meta.last_log_id,
-                last_membership: meta.last_membership.clone(),
-                application_data,
-            };
-        }
-
-        // Install snapshot
-        {
-            *self.current_snapshot.write().await = Some(new_snapshot);
-        }
+        self.set_current_snapshot_(new_snapshot)?;
 
         Ok(())
     }
 
-    async fn get_current_snapshot(&mut self) -> Result<Option<Snapshot<A::C>>, io::Error> {
-        match &*self.current_snapshot.read().await {
-            Some(snapshot) => Ok(Some(Snapshot {
-                meta: snapshot.meta.clone(),
-                snapshot: snapshot.data.clone(),
-            })),
-            None => Ok(None),
-        }
+    async fn get_current_snapshot(&mut self) -> Result<Option<Snapshot<A::Config>>, io::Error> {
+        let x = self.get_current_snapshot_()?;
+        Ok(x.map(|s| Snapshot {
+            meta: s.meta.clone(),
+            snapshot: s.data.clone(),
+        }))
     }
 }

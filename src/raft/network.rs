@@ -1,1 +1,1 @@
-pub(in crate::raft) mod grpc;
+pub(crate) mod grpc;
