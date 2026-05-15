@@ -2,25 +2,28 @@ use std::path::Path;
 use std::sync::Arc;
 
 use openraft::Config;
+use tokio::sync::RwLock;
 
 use crate::application::ApplicationStateMachine;
 use crate::raft::config::type_config::NodeId;
 use crate::raft::config::type_config::Raft;
-use crate::raft::log_store::rocksdb::RocksLogStore;
 use crate::raft::network::grpc::GRPCNetwork;
-use crate::raft::state_machine::store::StateMachineStore;
+use crate::raft::store::new_storage;
 
 pub(crate) mod config;
 pub(crate) mod state_machine;
+pub(crate) mod store;
 
-mod log_store;
 mod network;
 mod pb_impl;
 
-pub async fn new_raft<A: ApplicationStateMachine>(
+pub async fn new_raft<A>(
     node_id: NodeId<A::C>,
     path: &Path,
-) -> anyhow::Result<(Arc<StateMachineStore<A>>, Raft<A::C>)> {
+) -> anyhow::Result<(Arc<RwLock<A>>, Raft<A::C>)>
+where
+    A: ApplicationStateMachine,
+{
     let config = Arc::new(
         Config {
             heartbeat_interval: 500,
@@ -32,19 +35,17 @@ pub async fn new_raft<A: ApplicationStateMachine>(
     );
 
     let network = GRPCNetwork::default();
-    let log_store = RocksLogStore::new(path)?;
-    let state_machine = Arc::new(StateMachineStore::<A>::default());
+
+    let (log_store, state_machine) = new_storage(path).await?;
 
     Ok((
-        state_machine.clone(),
+        state_machine.state_machine.application_data.clone(),
         openraft::Raft::new(node_id, config, network, log_store, state_machine).await?,
     ))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use openraft::testing::log::StoreBuilder;
     use openraft::testing::log::Suite;
     use prost::DecodeError;
@@ -55,10 +56,11 @@ mod tests {
 
     use crate::application::ApplicationConfig;
     use crate::application::ApplicationStateMachine;
-    use crate::raft::RocksLogStore;
     use crate::raft::config::type_config::StorageError;
     use crate::raft::config::type_config::TypeConfig;
     use crate::raft::state_machine::store::StateMachineStore;
+    use crate::raft::store::log::RocksLogStore;
+    use crate::raft::store::new_storage;
 
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
     struct MockApplication {}
@@ -101,7 +103,7 @@ mod tests {
         StoreBuilder<
             TypeConfig<MockApplication>,
             RocksLogStore<TypeConfig<MockApplication>>,
-            Arc<StateMachineStore<MockApplication>>,
+            StateMachineStore<MockApplication>,
             (),
         > for RocksStoreBuilder
     {
@@ -111,17 +113,17 @@ mod tests {
             (
                 (),
                 RocksLogStore<TypeConfig<MockApplication>>,
-                Arc<StateMachineStore<MockApplication>>,
+                StateMachineStore<MockApplication>,
             ),
             StorageError<MockApplication>,
         > {
             let tmp_dir = TempDir::new().map_err(|e| StorageError::read_logs(&e))?;
 
-            Ok((
-                (),
-                RocksLogStore::new(tmp_dir.path()).map_err(|e| StorageError::read_logs(&e))?,
-                Arc::default(),
-            ))
+            let (log_store, state_machine) = new_storage(tmp_dir.path())
+                .await
+                .map_err(|e| StorageError::read_logs(&e))?;
+
+            Ok(((), log_store, state_machine))
         }
     }
 

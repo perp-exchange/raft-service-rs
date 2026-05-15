@@ -6,6 +6,7 @@ use std::sync::Arc;
 use maplit::btreemap;
 use openraft::ChangeMembers;
 use serde::Deserialize;
+use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::application::ApplicationConfig;
@@ -18,7 +19,6 @@ use crate::raft::config::type_config::NodeId;
 use crate::raft::config::type_config::Raft;
 use crate::raft::config::type_config::RaftError;
 use crate::raft::new_raft;
-use crate::raft::state_machine::store::StateMachineStore;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RaftServiceConfig {
@@ -27,9 +27,12 @@ pub struct RaftServiceConfig {
     pub log_path: PathBuf,
 }
 
-pub struct RaftDataClient<A: ApplicationStateMachine> {
+pub struct RaftDataClient<A>
+where
+    A: ApplicationStateMachine,
+{
     node_id: u64,
-    state_machine: Arc<StateMachineStore<A>>,
+    application: Arc<RwLock<A>>,
     raft: Raft<A::C>,
 }
 
@@ -40,7 +43,7 @@ where
     fn clone(&self) -> Self {
         Self {
             node_id: self.node_id,
-            state_machine: self.state_machine.clone(),
+            application: self.application.clone(),
             raft: self.raft.clone(),
         }
     }
@@ -62,9 +65,9 @@ where
     }
 
     pub async fn read<R>(&self, f: impl FnOnce(&A) -> R) -> R {
-        let sm = self.state_machine.state_machine.read().await;
+        let application_data = self.application.read().await;
 
-        f(&sm.application_data)
+        f(&application_data)
     }
 
     pub async fn read_safe<R>(
@@ -80,9 +83,9 @@ where
             Ok(linearizer) => {
                 linearizer.await_ready(&self.raft).await.unwrap();
 
-                let sm = self.state_machine.state_machine.read().await;
+                let application_data = self.application.read().await;
 
-                Ok(f(&sm.application_data))
+                Ok(f(&application_data))
             }
             Err(err) => Err(err),
         }
@@ -132,9 +135,12 @@ where
     }
 }
 
-pub struct RaftServer<A: ApplicationStateMachine> {
+pub struct RaftServer<A>
+where
+    A: ApplicationStateMachine,
+{
     pub(crate) node_id: u64,
-    pub(crate) state_machine: Arc<StateMachineStore<A>>,
+    pub(crate) application: Arc<RwLock<A>>,
     pub(crate) raft: Raft<A::C>,
 }
 
@@ -149,11 +155,11 @@ where
     pub async fn new(node_id: u64, log_store_path: &Path) -> anyhow::Result<Self> {
         info!(node_id, ?log_store_path, "Init raft");
 
-        let (state_machine, raft) = new_raft::<A>(node_id, log_store_path).await?;
+        let (application, raft) = new_raft::<A>(node_id, log_store_path).await?;
 
         Ok(Self {
             node_id,
-            state_machine,
+            application,
             raft,
         })
     }
@@ -168,7 +174,7 @@ where
     pub fn data_client(&self) -> RaftDataClient<A> {
         RaftDataClient {
             node_id: self.node_id,
-            state_machine: self.state_machine.clone(),
+            application: self.application.clone(),
             raft: self.raft.clone(),
         }
     }

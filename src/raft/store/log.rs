@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use std::io;
 use std::marker::PhantomData;
 use std::ops::RangeBounds;
-use std::path::Path;
 use std::sync::Arc;
 
 use byteorder::BigEndian;
@@ -20,40 +19,31 @@ use openraft::type_config::alias::EntryOf;
 use openraft::type_config::alias::LogIdOf;
 use openraft::type_config::alias::VoteOf;
 use rocksdb::ColumnFamily;
-use rocksdb::ColumnFamilyDescriptor;
 use rocksdb::DB;
 use rocksdb::Direction;
-use rocksdb::Options;
 use tokio::task::spawn_blocking;
 
-use crate::raft::log_store::rocksdb::meta::StoreMeta;
+use crate::raft::store::log::meta::StoreMeta;
 
-const META_COLUMN: &str = "meta";
-const LOGS_COLUMN: &str = "logs";
+pub const STORE_COLUMN: &str = "store";
+pub const META_COLUMN: &str = "meta";
+pub const LOGS_COLUMN: &str = "logs";
 
 #[derive(Clone)]
-pub(in crate::raft) struct RocksLogStore<C> {
+pub struct RocksLogStore<C> {
     db: Arc<DB>,
     _mark: PhantomData<C>,
 }
 
-impl<C: RaftTypeConfig> RocksLogStore<C> {
-    pub(in crate::raft) fn new<P: AsRef<Path>>(path: P) -> Result<Self, io::Error> {
-        let mut opts = Options::default();
-        opts.create_missing_column_families(true);
-        opts.create_if_missing(true);
-
-        let cfs = vec![
-            ColumnFamilyDescriptor::new(META_COLUMN, Options::default()),
-            ColumnFamilyDescriptor::new(LOGS_COLUMN, Options::default()),
-        ];
-
-        let db = Arc::new(DB::open_cf_descriptors(&opts, path, cfs).map_err(io::Error::other)?);
-
-        Ok(RocksLogStore {
+impl<C> RocksLogStore<C>
+where
+    C: RaftTypeConfig,
+{
+    pub fn new(db: Arc<DB>) -> Self {
+        Self {
             db,
             _mark: PhantomData,
-        })
+        }
     }
 
     fn cf_meta(&self) -> &ColumnFamily {
@@ -217,6 +207,8 @@ impl<C: RaftTypeConfig> RaftLogStorage<C> for RocksLogStore<C> {
     }
 
     async fn purge(&mut self, log_id: LogIdOf<C>) -> Result<(), io::Error> {
+        tracing::debug!("delete_log: [0, {:?}]", log_id);
+
         self.put_meta::<meta::LastPurged>(&log_id)?;
 
         let from = id_to_bin(0);
